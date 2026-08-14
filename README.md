@@ -23,7 +23,7 @@ img = np.array(Image.open("sprite.png"))
 print(img.shape)  # (height, width, 4) for RGBA
 print(img[0, 0])  # [R, G, B, A] of top-left pixel
 ```
-## Why this matters for your tool:
+## Why this matters for this tool:
  When you rig a character, you're not moving pixels directly — you're moving the coordinate space those pixels are mapped onto. The pixels themselves never change, only their position in the world does.
 ### Test Subject 
 
