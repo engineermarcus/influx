@@ -1,0 +1,33 @@
+import {
+  ImagePlus,
+  Layers,
+  Maximize2,
+  Minimize2,
+  Download,
+  Trash2,
+  RotateCcw,
+  Loader2,
+  Zap,
+  X,
+  GripVertical,
+  Eye,
+  Undo: Undo2,
+  Undo2,
+} from 'lucide-react';
+
+export const Icons = {
+  Upload: ImagePlus,
+  Layers,
+  Fullscreen: Maximize2,
+  ExitFullscreen: Minimize2,
+  Download,
+  Trash: Trash2,
+  Reset: RotateCcw,
+  Spinner: Loader2,
+  Logo: Zap,
+  Close: X,
+  Grip: GripVertical,
+  Eye,
+  Undo: Undo2,
+  Undo2,
+};

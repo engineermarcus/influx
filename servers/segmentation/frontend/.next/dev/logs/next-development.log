@@ -1,0 +1,21 @@
+{"timestamp":"00:00:00.832","source":"Server","level":"LOG","message":""}
+{"timestamp":"00:00:20.972","source":"Browser","level":"INFO","message":"Download the React DevTools for a better development experience: https://react.dev/link/react-devtools"}
+{"timestamp":"00:00:47.369","source":"Server","level":"LOG","message":""}
+{"timestamp":"00:00:47.369","source":"Server","level":"LOG","message":"Could not open layout.tsx in the editor."}
+{"timestamp":"00:00:47.369","source":"Server","level":"LOG","message":"The editor process exited with an error: Terminal editors can only be used on macOS."}
+{"timestamp":"00:00:47.370","source":"Server","level":"LOG","message":""}
+{"timestamp":"00:00:47.370","source":"Server","level":"LOG","message":"To set up the editor integration, add something like REACT_EDITOR=atom to the .env.local file in your project folder and restart the development server."}
+{"timestamp":"00:00:47.370","source":"Server","level":"LOG","message":""}
+{"timestamp":"00:13:23.018","source":"Browser","level":"INFO","message":"Download the React DevTools for a better development experience: https://react.dev/link/react-devtools"}
+{"timestamp":"00:16:44.540","source":"Server","level":"LOG","message":""}
+{"timestamp":"00:16:44.540","source":"Server","level":"LOG","message":"Could not open layout.tsx in the editor."}
+{"timestamp":"00:16:44.540","source":"Server","level":"LOG","message":"The editor process exited with an error: Terminal editors can only be used on macOS."}
+{"timestamp":"00:16:44.541","source":"Server","level":"LOG","message":""}
+{"timestamp":"00:16:44.541","source":"Server","level":"LOG","message":"To set up the editor integration, add something like REACT_EDITOR=atom to the .env.local file in your project folder and restart the development server."}
+{"timestamp":"00:16:44.541","source":"Server","level":"LOG","message":""}
+{"timestamp":"00:16:45.653","source":"Server","level":"LOG","message":""}
+{"timestamp":"00:16:45.654","source":"Server","level":"LOG","message":"Could not open layout.tsx in the editor."}
+{"timestamp":"00:16:45.654","source":"Server","level":"LOG","message":"The editor process exited with an error: Terminal editors can only be used on macOS."}
+{"timestamp":"00:16:45.654","source":"Server","level":"LOG","message":""}
+{"timestamp":"00:16:45.654","source":"Server","level":"LOG","message":"To set up the editor integration, add something like REACT_EDITOR=atom to the .env.local file in your project folder and restart the development server."}
+{"timestamp":"00:16:45.655","source":"Server","level":"LOG","message":""}

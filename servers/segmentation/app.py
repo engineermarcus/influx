@@ -100,6 +100,7 @@ def session_response(sess: dict) -> dict:
         "coverage": img_to_b64(coverage_preview(arr, claimed)),
         "recomposed": img_to_b64(recomposed) if recomposed else None,
         "layer_count": len(layers),
+        "can_undo": len(sess["history"]) > 0,
     }
 
 
@@ -107,6 +108,16 @@ def get_session(session_id: str):
     if not session_id or session_id not in sessions:
         return None
     return sessions[session_id]
+
+def push_history(sess: dict):
+    """Snapshot layers+claimed before a mutating op, so it can be undone."""
+    layers_copy = [dict(l) for l in sess["layers"]]  # crops are PIL Images, shallow copy is fine (never mutated in place)
+    claimed_copy = sess["claimed"].copy() if sess["claimed"] is not None else None
+    sess["history"].append({"layers": layers_copy, "claimed": claimed_copy})
+    if len(sess["history"]) > 20:  # cap history so memory doesn't grow unbounded
+        sess["history"].pop(0)
+
+
 
 
 # ── routes ────────────────────────────────────────────────────────────────────
@@ -119,7 +130,7 @@ def index():
 @app.route("/api/session", methods=["POST"])
 def create_session():
     sid = str(uuid.uuid4())
-    sessions[sid] = {"image": None, "layers": [], "claimed": None}
+    sessions[sid] = {"image": None, "layers": [], "claimed": None, "history": []}
     return jsonify({"session_id": sid})
 
 
@@ -132,6 +143,7 @@ def upload():
 
     image = b64_to_img(data["image"])
     sess["image"] = image
+    sess["history"] = []
     sess["layers"] = []
     sess["claimed"] = None
 
@@ -164,6 +176,7 @@ def segment():
     if claimed is None:
         claimed = np.zeros((h, w), dtype=bool)
 
+    push_history(sess)
     raw_mask = run_sam(arr, x, y) > 0
     m = binary_dilation(raw_mask, iterations=DILATE_PX) & ~claimed
 
@@ -202,6 +215,7 @@ def remove():
     if claimed is None:
         claimed = np.zeros((h, w), dtype=bool)
 
+    push_history(sess)
     hit = None
     for i in range(len(layers) - 1, -1, -1):
         l = layers[i]
@@ -231,6 +245,7 @@ def clear():
     if sess is None:
         return jsonify({"error": "Invalid session"}), 400
 
+    push_history(sess)
     sess["layers"] = []
     sess["claimed"] = None
 
@@ -254,6 +269,24 @@ def recompose():
         return jsonify({"error": "Invalid session"}), 400
     result = do_recompose(sess["image"], sess["layers"])
     return jsonify({"recomposed": img_to_b64(result) if result else None})
+
+
+
+@app.route("/api/undo", methods=["POST"])
+def undo():
+    data = request.json
+    sess = get_session(data.get("session_id"))
+    if sess is None:
+        return jsonify({"error": "Invalid session"}), 400
+    if not sess["history"]:
+        return jsonify({"error": "Nothing to undo"}), 400
+
+    prev = sess["history"].pop()
+    sess["layers"] = prev["layers"]
+    sess["claimed"] = prev["claimed"]
+    resp = session_response(sess)
+    resp["can_undo"] = len(sess["history"]) > 0
+    return jsonify(resp)
 
 
 if __name__ == "__main__":

@@ -1,2 +1,11 @@
 venv
 __pycache__/
+node_modules/
+package-lock.json
+*.bak
+build/
+.env.local.example
+AGENTS.md 
+CLAUDE.md 
+patch.py 
+patch.sh 
