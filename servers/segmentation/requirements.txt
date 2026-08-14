@@ -1,0 +1,12 @@
+gradio
+spaces
+numpy
+Pillow
+torch
+torchvision
+segment-anything
+scipy
+fastapi
+uvicorn
+pydantic
+python-multipart
