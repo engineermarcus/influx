@@ -1,56 +1,78 @@
 import sys
 import warnings
-import spaces
-import gradio as gr
-
-warnings.filterwarnings("ignore", message=".*Invalid file descriptor.*")
-_orig_unraisablehook = sys.unraisablehook
-def _quiet_fd_errors(unraisable):
-    if unraisable.exc_type is ValueError and "Invalid file descriptor" in str(unraisable.exc_value):
-        return
-    _orig_unraisablehook(unraisable)
-sys.unraisablehook = _quiet_fd_errors
+import os
+import uuid
+import io
+import base64
 import numpy as np
 from PIL import Image
 import torch
 from segment_anything import sam_model_registry, SamPredictor
 import urllib.request
-import os
-
 from scipy.ndimage import binary_dilation
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
 
-DILATE_PX = 1  # grow each new mask by this many pixels before claiming, to close seam/edge gaps
+warnings.filterwarnings("ignore")
 
+DILATE_PX = 1
 CHECKPOINT = "sam_vit_b_01ec64.pth"
+
+print("Checking SAM checkpoint...")
 if not os.path.exists(CHECKPOINT):
+    print("Downloading SAM ViT-B checkpoint (~375MB)...")
     urllib.request.urlretrieve(
         "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth",
         CHECKPOINT
     )
+    print("Download complete.")
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Loading SAM on {device}...")
 sam = sam_model_registry["vit_b"](checkpoint=CHECKPOINT)
+sam.to(device)
 predictor = SamPredictor(sam)
+print("SAM ready.")
 
-@spaces.GPU
-def get_mask(arr, x, y):
-    sam.to("cuda")
+# In-memory session store  { session_id: { image, layers, claimed } }
+sessions = {}
+
+app = Flask(__name__, static_folder="static")
+CORS(app)
+
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def img_to_b64(img: Image.Image) -> str:
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def b64_to_img(b64: str) -> Image.Image:
+    if "," in b64:
+        b64 = b64.split(",", 1)[1]
+    return Image.open(io.BytesIO(base64.b64decode(b64)))
+
+
+def run_sam(arr: np.ndarray, x: int, y: int) -> np.ndarray:
     predictor.set_image(arr)
     masks, scores, _ = predictor.predict(
         point_coords=np.array([[x, y]]),
         point_labels=np.array([1]),
-        multimask_output=True
+        multimask_output=True,
     )
     best = masks[np.argmax(scores)]
     return best.astype(np.uint8) * 255
 
-def coverage_preview(arr, claimed):
-    # dim everything already claimed so unclaimed pixels (e.g. a missed
-    # camera) stay bright and obvious
+
+def coverage_preview(arr: np.ndarray, claimed: np.ndarray) -> Image.Image:
     dim = (arr * 0.35).astype(np.uint8)
     return Image.fromarray(np.where(claimed[..., None], dim, arr))
 
-def recompose(image, layers):
-    if image is None or not layers:
+
+def do_recompose(image: Image.Image, layers: list) -> Image.Image | None:
+    if not layers:
         return None
     arr = np.array(image.convert("RGB"))
     h, w = arr.shape[:2]
@@ -58,117 +80,181 @@ def recompose(image, layers):
     for l in layers:
         crop = np.array(l["crop"])
         x, y, cw, ch = l["x"], l["y"], l["w"], l["h"]
-        region = canvas[y:y + ch, x:x + cw].astype(np.float32)
+        region = canvas[y : y + ch, x : x + cw].astype(np.float32)
         alpha = (crop[..., 3:4] / 255.0).astype(np.float32)
         region[..., :3] = region[..., :3] * (1 - alpha) + crop[..., :3] * alpha
         region[..., 3:4] = np.maximum(region[..., 3:4], crop[..., 3:4])
-        canvas[y:y + ch, x:x + cw] = region.astype(np.uint8)
+        canvas[y : y + ch, x : x + cw] = region.astype(np.uint8)
     return Image.fromarray(canvas)
 
-def on_select(image, evt: gr.SelectData, layers, claimed):
-    x, y = evt.index[0], evt.index[1]
+
+def session_response(sess: dict) -> dict:
+    image, layers, claimed = sess["image"], sess["layers"], sess["claimed"]
     arr = np.array(image.convert("RGB"))
     h, w = arr.shape[:2]
     if claimed is None:
         claimed = np.zeros((h, w), dtype=bool)
-    raw_mask = get_mask(arr, x, y) > 0
-    m = binary_dilation(raw_mask, iterations=DILATE_PX)
-    m = m & ~claimed  # drop pixels an earlier layer already took
+    recomposed = do_recompose(image, layers)
+    return {
+        "gallery": [img_to_b64(l["crop"]) for l in layers],
+        "coverage": img_to_b64(coverage_preview(arr, claimed)),
+        "recomposed": img_to_b64(recomposed) if recomposed else None,
+        "layer_count": len(layers),
+    }
+
+
+def get_session(session_id: str):
+    if not session_id or session_id not in sessions:
+        return None
+    return sessions[session_id]
+
+
+# ── routes ────────────────────────────────────────────────────────────────────
+
+@app.route("/")
+def index():
+    return send_from_directory("static", "index.html")
+
+
+@app.route("/api/session", methods=["POST"])
+def create_session():
+    sid = str(uuid.uuid4())
+    sessions[sid] = {"image": None, "layers": [], "claimed": None}
+    return jsonify({"session_id": sid})
+
+
+@app.route("/api/upload", methods=["POST"])
+def upload():
+    data = request.json
+    sess = get_session(data.get("session_id"))
+    if sess is None:
+        return jsonify({"error": "Invalid session"}), 400
+
+    image = b64_to_img(data["image"])
+    sess["image"] = image
+    sess["layers"] = []
+    sess["claimed"] = None
+
+    arr = np.array(image.convert("RGB"))
+    h, w = arr.shape[:2]
+    claimed = np.zeros((h, w), dtype=bool)
+
+    return jsonify({
+        "status": "ok",
+        "width": image.width,
+        "height": image.height,
+        "coverage": img_to_b64(coverage_preview(arr, claimed)),
+    })
+
+
+@app.route("/api/segment", methods=["POST"])
+def segment():
+    data = request.json
+    sess = get_session(data.get("session_id"))
+    if sess is None:
+        return jsonify({"error": "Invalid session"}), 400
+    if sess["image"] is None:
+        return jsonify({"error": "No image uploaded"}), 400
+
+    x, y = int(data["x"]), int(data["y"])
+    image, layers, claimed = sess["image"], sess["layers"], sess["claimed"]
+    arr = np.array(image.convert("RGB"))
+    h, w = arr.shape[:2]
+
+    if claimed is None:
+        claimed = np.zeros((h, w), dtype=bool)
+
+    raw_mask = run_sam(arr, x, y) > 0
+    m = binary_dilation(raw_mask, iterations=DILATE_PX) & ~claimed
 
     ys, xs = np.where(m)
     if len(xs) == 0:
-        return layers, [l["crop"] for l in layers], claimed, coverage_preview(arr, claimed), recompose(image, layers)
+        sess["claimed"] = claimed
+        return jsonify(session_response(sess))
 
-    x0, x1 = xs.min(), xs.max()
-    y0, y1 = ys.min(), ys.max()
-
+    x0, x1, y0, y1 = int(xs.min()), int(xs.max()), int(ys.min()), int(ys.max())
     rgba = np.zeros((h, w, 4), dtype=np.uint8)
     rgba[..., :3] = arr
     rgba[..., 3] = (m * 255).astype(np.uint8)
 
-    crop = rgba[y0:y1+1, x0:x1+1]
-    layer = {
-        "crop": Image.fromarray(crop),
-        "x": int(x0), "y": int(y0),
-        "w": int(x1 - x0 + 1), "h": int(y1 - y0 + 1)
-    }
+    sess["layers"] = layers + [{
+        "crop": Image.fromarray(rgba[y0 : y1 + 1, x0 : x1 + 1]),
+        "x": x0, "y": y0,
+        "w": x1 - x0 + 1, "h": y1 - y0 + 1,
+    }]
+    sess["claimed"] = claimed | m
+    return jsonify(session_response(sess))
 
-    layers = layers + [layer]
-    claimed = claimed | m
-    return layers, [l["crop"] for l in layers], claimed, coverage_preview(arr, claimed), recompose(image, layers)
 
-def clear_layers():
-    return [], [], None, None, None
+@app.route("/api/remove", methods=["POST"])
+def remove():
+    data = request.json
+    sess = get_session(data.get("session_id"))
+    if sess is None:
+        return jsonify({"error": "Invalid session"}), 400
+    if sess["image"] is None:
+        return jsonify({"error": "No image uploaded"}), 400
 
-def on_remove(image, layers, claimed, evt: gr.SelectData):
-    x, y = evt.index[0], evt.index[1]
-    arr = np.array(image.convert("RGB"))
+    x, y = int(data["x"]), int(data["y"])
+    layers, claimed = sess["layers"], sess["claimed"]
+    arr = np.array(sess["image"].convert("RGB"))
     h, w = arr.shape[:2]
     if claimed is None:
         claimed = np.zeros((h, w), dtype=bool)
 
-    hit_idx = None
+    hit = None
     for i in range(len(layers) - 1, -1, -1):
         l = layers[i]
         lx, ly, lw, lh = l["x"], l["y"], l["w"], l["h"]
         if lx <= x < lx + lw and ly <= y < ly + lh:
             crop_arr = np.array(l["crop"])
             if crop_arr[y - ly, x - lx, 3] > 0:
-                hit_idx = i
+                hit = i
                 break
 
-    if hit_idx is None:
-        return layers, [l["crop"] for l in layers], claimed, coverage_preview(arr, claimed), recompose(image, layers)
+    if hit is not None:
+        removed = layers[hit]
+        rx, ry, rw, rh = removed["x"], removed["y"], removed["w"], removed["h"]
+        mask = np.array(removed["crop"])[..., 3] > 0
+        claimed = claimed.copy()
+        claimed[ry : ry + rh, rx : rx + rw][mask] = False
+        sess["layers"] = layers[:hit] + layers[hit + 1 :]
+        sess["claimed"] = claimed
 
-    removed = layers[hit_idx]
-    rx, ry, rw, rh = removed["x"], removed["y"], removed["w"], removed["h"]
-    removed_alpha = np.array(removed["crop"])[..., 3] > 0
-    claimed = claimed.copy()
-    claimed[ry:ry + rh, rx:rx + rw][removed_alpha] = False
-    layers = layers[:hit_idx] + layers[hit_idx + 1:]
-    return layers, [l["crop"] for l in layers], claimed, coverage_preview(arr, claimed), recompose(image, layers)
+    return jsonify(session_response(sess))
 
-with gr.Blocks(title="Influx Segmentation") as demo:
-    gr.Markdown("# Influx Segmentation")
-    gr.Markdown("Click a part to extract it. Each layer is cropped + carries its x,y offset for recomposition.")
 
-    layers_state = gr.State([])
-    claimed_state = gr.State(None)
+@app.route("/api/clear", methods=["POST"])
+def clear():
+    data = request.json
+    sess = get_session(data.get("session_id"))
+    if sess is None:
+        return jsonify({"error": "Invalid session"}), 400
 
-    with gr.Row():
-        input_img = gr.Image(type="pil", label="Image (click a point)")
-        coverage_img = gr.Image(label="Coverage — click a bright spot to add it", interactive=False)
-        output_gallery = gr.Gallery(label="Extracted layers", columns=3)
+    sess["layers"] = []
+    sess["claimed"] = None
 
-    with gr.Row():
-        clear_btn = gr.Button("Clear layers")
-        recompose_btn = gr.Button("Recompose")
+    if sess["image"]:
+        arr = np.array(sess["image"].convert("RGB"))
+        h, w = arr.shape[:2]
+        claimed = np.zeros((h, w), dtype=bool)
+        return jsonify({
+            "gallery": [], "layer_count": 0,
+            "coverage": img_to_b64(coverage_preview(arr, claimed)),
+            "recomposed": None,
+        })
+    return jsonify({"gallery": [], "layer_count": 0, "coverage": None, "recomposed": None})
 
-    recomposed_img = gr.Image(label="Recomposed (gaps = missing pieces)", interactive=False)
 
-    input_img.select(
-        fn=on_select,
-        inputs=[input_img, layers_state, claimed_state],
-        outputs=[layers_state, output_gallery, claimed_state, coverage_img, recomposed_img]
-    )
-    coverage_img.select(
-        fn=on_select,
-        inputs=[input_img, layers_state, claimed_state],
-        outputs=[layers_state, output_gallery, claimed_state, coverage_img, recomposed_img]
-    )
-    recomposed_img.select(
-        fn=on_remove,
-        inputs=[input_img, layers_state, claimed_state],
-        outputs=[layers_state, output_gallery, claimed_state, coverage_img, recomposed_img]
-    )
-    clear_btn.click(
-        fn=clear_layers,
-        outputs=[layers_state, output_gallery, claimed_state, coverage_img, recomposed_img]
-    )
-    recompose_btn.click(
-        fn=recompose,
-        inputs=[input_img, layers_state],
-        outputs=[recomposed_img]
-    )
+@app.route("/api/recompose", methods=["POST"])
+def recompose():
+    data = request.json
+    sess = get_session(data.get("session_id"))
+    if sess is None:
+        return jsonify({"error": "Invalid session"}), 400
+    result = do_recompose(sess["image"], sess["layers"])
+    return jsonify({"recomposed": img_to_b64(result) if result else None})
 
-demo.launch()
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=7860, debug=False)
