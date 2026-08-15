@@ -1732,26 +1732,36 @@ var _s = __turbopack_context__.k.signature();
 ;
 ;
 const MARGIN = 12;
+const MIN_W = 160;
+const MIN_H = 140;
+const HEADER_H = 32;
 function FloatingHud({ src, label, onClose }) {
     _s();
+    // pos = offset of the box's right/bottom edge from the viewport's right/bottom edge
     const [pos, setPos] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useState"])({
         x: 0,
         y: 0
-    }); // offset from bottom-right, set on mount
+    });
+    const [size, setSize] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useState"])({
+        w: 220,
+        h: 165 + HEADER_H
+    });
     const dragState = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useRef"])(null);
+    const resizeState = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useRef"])(null);
     const boxRef = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useRef"])(null);
     const [dragging, setDragging] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useState"])(false);
+    const [resizing, setResizing] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useState"])(false);
     (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useEffect"])({
         "FloatingHud.useEffect": ()=>{
-            // initial position: bottom-right corner
             setPos({
                 x: MARGIN,
                 y: MARGIN
             });
         }
     }["FloatingHud.useEffect"], []);
-    const onPointerDown = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useCallback"])({
-        "FloatingHud.useCallback[onPointerDown]": (e)=>{
+    // ── drag to move (header bar) ────────────────────────────────
+    const onDragPointerDown = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useCallback"])({
+        "FloatingHud.useCallback[onDragPointerDown]": (e)=>{
             dragState.current = {
                 startX: e.clientX,
                 startY: e.clientY,
@@ -1761,19 +1771,18 @@ function FloatingHud({ src, label, onClose }) {
             setDragging(true);
             e.target.setPointerCapture(e.pointerId);
         }
-    }["FloatingHud.useCallback[onPointerDown]"], [
+    }["FloatingHud.useCallback[onDragPointerDown]"], [
         pos
     ]);
-    const onPointerMove = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useCallback"])({
-        "FloatingHud.useCallback[onPointerMove]": (e)=>{
+    const onDragPointerMove = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useCallback"])({
+        "FloatingHud.useCallback[onDragPointerMove]": (e)=>{
             if (!dragState.current) return;
             const dx = e.clientX - dragState.current.startX;
             const dy = e.clientY - dragState.current.startY;
-            // dragging right/down should *decrease* offset-from-edge (x,y are distances from bottom-right)
             let nx = dragState.current.origX - dx;
             let ny = dragState.current.origY - dy;
-            const w = boxRef.current?.offsetWidth ?? 220;
-            const h = boxRef.current?.offsetHeight ?? 180;
+            const w = boxRef.current?.offsetWidth ?? size.w;
+            const h = boxRef.current?.offsetHeight ?? size.h;
             nx = Math.min(Math.max(nx, MARGIN), window.innerWidth - w - MARGIN);
             ny = Math.min(Math.max(ny, MARGIN), window.innerHeight - h - MARGIN);
             setPos({
@@ -1781,107 +1790,262 @@ function FloatingHud({ src, label, onClose }) {
                 y: ny
             });
         }
-    }["FloatingHud.useCallback[onPointerMove]"], []);
-    const onPointerUp = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useCallback"])({
-        "FloatingHud.useCallback[onPointerUp]": ()=>{
+    }["FloatingHud.useCallback[onDragPointerMove]"], [
+        size
+    ]);
+    const onDragPointerUp = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useCallback"])({
+        "FloatingHud.useCallback[onDragPointerUp]": ()=>{
             dragState.current = null;
             setDragging(false);
         }
-    }["FloatingHud.useCallback[onPointerUp]"], []);
+    }["FloatingHud.useCallback[onDragPointerUp]"], []);
+    // ── drag to resize (4 edges) ─────────────────────────────────
+    const startResize = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useCallback"])({
+        "FloatingHud.useCallback[startResize]": (dir)=>({
+                "FloatingHud.useCallback[startResize]": (e)=>{
+                    e.stopPropagation();
+                    resizeState.current = {
+                        dir,
+                        startX: e.clientX,
+                        startY: e.clientY,
+                        origW: size.w,
+                        origH: size.h,
+                        origPosX: pos.x,
+                        origPosY: pos.y
+                    };
+                    setResizing(true);
+                    e.target.setPointerCapture(e.pointerId);
+                }
+            })["FloatingHud.useCallback[startResize]"]
+    }["FloatingHud.useCallback[startResize]"], [
+        size,
+        pos
+    ]);
+    const onResizePointerMove = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useCallback"])({
+        "FloatingHud.useCallback[onResizePointerMove]": (e)=>{
+            const rs = resizeState.current;
+            if (!rs) return;
+            const dx = e.clientX - rs.startX;
+            const dy = e.clientY - rs.startY;
+            let nw = rs.origW;
+            let nh = rs.origH;
+            let nx = rs.origPosX;
+            let ny = rs.origPosY;
+            // box is anchored via right/bottom offsets (pos.x/pos.y from viewport edge).
+            // 'e' (right edge) and 's' (bottom edge) grow away from that anchor, so
+            // pos must shrink by the same delta to keep the box's own opposite edge fixed.
+            // 'w' (left edge) and 'n' (top edge) grow toward the anchor, so pos grows instead.
+            // Corners (e.g. 'se', 'nw') just apply both axes' logic at once.
+            if (rs.dir.includes('e')) {
+                nw = rs.origW + dx;
+                nx = rs.origPosX - dx;
+            } else if (rs.dir.includes('w')) {
+                nw = rs.origW - dx;
+            }
+            if (rs.dir.includes('s')) {
+                nh = rs.origH + dy;
+                ny = rs.origPosY - dy;
+            } else if (rs.dir.includes('n')) {
+                nh = rs.origH - dy;
+            }
+            // clamp width/height to sane bounds, and re-derive position clamps
+            // so growing past the viewport edge doesn't fling the box offscreen
+            nw = Math.min(Math.max(nw, MIN_W), window.innerWidth - MARGIN * 2);
+            nh = Math.min(Math.max(nh, MIN_H), window.innerHeight - MARGIN * 2);
+            nx = Math.min(Math.max(nx, MARGIN), window.innerWidth - nw - MARGIN);
+            ny = Math.min(Math.max(ny, MARGIN), window.innerHeight - nh - MARGIN);
+            setSize({
+                w: nw,
+                h: nh
+            });
+            setPos({
+                x: nx,
+                y: ny
+            });
+        }
+    }["FloatingHud.useCallback[onResizePointerMove]"], []);
+    const onResizePointerUp = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useCallback"])({
+        "FloatingHud.useCallback[onResizePointerUp]": ()=>{
+            resizeState.current = null;
+            setResizing(false);
+        }
+    }["FloatingHud.useCallback[onResizePointerUp]"], []);
+    const isBusy = dragging || resizing;
+    const edgeHandleProps = (dir)=>({
+            onPointerDown: startResize(dir),
+            onPointerMove: onResizePointerMove,
+            onPointerUp: onResizePointerUp,
+            onPointerCancel: onResizePointerUp
+        });
     return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
         ref: boxRef,
         style: {
             right: pos.x,
-            bottom: pos.y
+            bottom: pos.y,
+            width: size.w,
+            height: size.h
         },
-        className: "fixed z-[70] w-[38vw] max-w-[260px] min-w-[160px] sm:w-[220px] rounded-xl border border-amber/40 bg-surface/95 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.5)] overflow-hidden animate-pulse-ring",
+        className: "fixed z-[70] rounded-xl border border-amber/40 bg-surface/95 backdrop-blur-md overflow-visible animate-pulse-ring flex flex-col",
         children: [
             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                onPointerDown: onPointerDown,
-                onPointerMove: onPointerMove,
-                onPointerUp: onPointerUp,
-                onPointerCancel: onPointerUp,
-                className: "flex items-center gap-1.5 px-2.5 py-1.5 bg-raised border-b border-border cursor-grab active:cursor-grabbing touch-none select-none",
+                className: "absolute inset-0 rounded-xl overflow-hidden flex flex-col",
                 children: [
-                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$components$2f$icons$2e$tsx__$5b$app$2d$client$5d$__$28$ecmascript$29$__["Icons"].Grip, {
-                        className: "w-3.5 h-3.5 text-dim shrink-0"
-                    }, void 0, false, {
-                        fileName: "[project]/src/components/FloatingHud.tsx",
-                        lineNumber: 63,
-                        columnNumber: 9
-                    }, this),
-                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
-                        className: "text-[10px] font-semibold uppercase tracking-wider text-amber flex-1 truncate",
+                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+                        onPointerDown: onDragPointerDown,
+                        onPointerMove: onDragPointerMove,
+                        onPointerUp: onDragPointerUp,
+                        onPointerCancel: onDragPointerUp,
+                        className: "flex items-center gap-1.5 px-2.5 py-1.5 bg-raised border-b border-border cursor-grab active:cursor-grabbing touch-none select-none shrink-0",
                         children: [
-                            label,
-                            " · live"
+                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$components$2f$icons$2e$tsx__$5b$app$2d$client$5d$__$28$ecmascript$29$__["Icons"].Grip, {
+                                className: "w-3.5 h-3.5 text-dim shrink-0"
+                            }, void 0, false, {
+                                fileName: "[project]/src/components/FloatingHud.tsx",
+                                lineNumber: 152,
+                                columnNumber: 11
+                            }, this),
+                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
+                                className: "text-[10px] font-semibold uppercase tracking-wider text-amber flex-1 truncate",
+                                children: [
+                                    label,
+                                    " · live"
+                                ]
+                            }, void 0, true, {
+                                fileName: "[project]/src/components/FloatingHud.tsx",
+                                lineNumber: 153,
+                                columnNumber: 11
+                            }, this),
+                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("button", {
+                                onClick: onClose,
+                                className: "text-muted hover:text-text transition-colors p-0.5",
+                                "aria-label": "Close preview",
+                                children: /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$components$2f$icons$2e$tsx__$5b$app$2d$client$5d$__$28$ecmascript$29$__["Icons"].Close, {
+                                    className: "w-3.5 h-3.5"
+                                }, void 0, false, {
+                                    fileName: "[project]/src/components/FloatingHud.tsx",
+                                    lineNumber: 161,
+                                    columnNumber: 13
+                                }, this)
+                            }, void 0, false, {
+                                fileName: "[project]/src/components/FloatingHud.tsx",
+                                lineNumber: 156,
+                                columnNumber: 11
+                            }, this)
                         ]
                     }, void 0, true, {
                         fileName: "[project]/src/components/FloatingHud.tsx",
-                        lineNumber: 64,
+                        lineNumber: 145,
                         columnNumber: 9
                     }, this),
-                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("button", {
-                        onClick: onClose,
-                        className: "text-muted hover:text-text transition-colors p-0.5",
-                        "aria-label": "Close preview",
-                        children: /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$components$2f$icons$2e$tsx__$5b$app$2d$client$5d$__$28$ecmascript$29$__["Icons"].Close, {
-                            className: "w-3.5 h-3.5"
+                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+                        className: "flex-1 bg-raised flex items-center justify-center min-h-0",
+                        children: src ? /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("img", {
+                            src: src,
+                            alt: `${label} preview`,
+                            className: "max-w-full max-h-full object-contain",
+                            draggable: false
                         }, void 0, false, {
                             fileName: "[project]/src/components/FloatingHud.tsx",
-                            lineNumber: 72,
-                            columnNumber: 11
+                            lineNumber: 167,
+                            columnNumber: 13
+                        }, this) : /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
+                            className: "text-[10px] text-dim px-2 text-center",
+                            children: "Nothing recomposed yet"
+                        }, void 0, false, {
+                            fileName: "[project]/src/components/FloatingHud.tsx",
+                            lineNumber: 169,
+                            columnNumber: 13
                         }, this)
                     }, void 0, false, {
                         fileName: "[project]/src/components/FloatingHud.tsx",
-                        lineNumber: 67,
+                        lineNumber: 165,
                         columnNumber: 9
                     }, this)
                 ]
             }, void 0, true, {
                 fileName: "[project]/src/components/FloatingHud.tsx",
-                lineNumber: 56,
+                lineNumber: 144,
                 columnNumber: 7
             }, this),
             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                className: "aspect-[4/3] bg-raised flex items-center justify-center",
-                children: src ? /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("img", {
-                    src: src,
-                    alt: `${label} preview`,
-                    className: "max-w-full max-h-full object-contain",
-                    draggable: false
-                }, void 0, false, {
-                    fileName: "[project]/src/components/FloatingHud.tsx",
-                    lineNumber: 77,
-                    columnNumber: 11
-                }, this) : /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
-                    className: "text-[10px] text-dim px-2 text-center",
-                    children: "Nothing recomposed yet"
-                }, void 0, false, {
-                    fileName: "[project]/src/components/FloatingHud.tsx",
-                    lineNumber: 79,
-                    columnNumber: 11
-                }, this)
+                ...edgeHandleProps('n'),
+                className: "absolute -top-1 left-3 right-3 h-2 cursor-ns-resize touch-none"
             }, void 0, false, {
                 fileName: "[project]/src/components/FloatingHud.tsx",
-                lineNumber: 75,
+                lineNumber: 175,
                 columnNumber: 7
             }, this),
-            dragging && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+                ...edgeHandleProps('s'),
+                className: "absolute -bottom-1 left-3 right-3 h-2 cursor-ns-resize touch-none"
+            }, void 0, false, {
+                fileName: "[project]/src/components/FloatingHud.tsx",
+                lineNumber: 176,
+                columnNumber: 7
+            }, this),
+            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+                ...edgeHandleProps('w'),
+                className: "absolute -left-1 top-3 bottom-3 w-2 cursor-ew-resize touch-none"
+            }, void 0, false, {
+                fileName: "[project]/src/components/FloatingHud.tsx",
+                lineNumber: 177,
+                columnNumber: 7
+            }, this),
+            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+                ...edgeHandleProps('e'),
+                className: "absolute -right-1 top-3 bottom-3 w-2 cursor-ew-resize touch-none"
+            }, void 0, false, {
+                fileName: "[project]/src/components/FloatingHud.tsx",
+                lineNumber: 178,
+                columnNumber: 7
+            }, this),
+            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+                ...edgeHandleProps('nw'),
+                className: "absolute -top-1 -left-1 w-3 h-3 cursor-nwse-resize touch-none"
+            }, void 0, false, {
+                fileName: "[project]/src/components/FloatingHud.tsx",
+                lineNumber: 181,
+                columnNumber: 7
+            }, this),
+            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+                ...edgeHandleProps('ne'),
+                className: "absolute -top-1 -right-1 w-3 h-3 cursor-nesw-resize touch-none"
+            }, void 0, false, {
+                fileName: "[project]/src/components/FloatingHud.tsx",
+                lineNumber: 182,
+                columnNumber: 7
+            }, this),
+            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+                ...edgeHandleProps('sw'),
+                className: "absolute -bottom-1 -left-1 w-3 h-3 cursor-nesw-resize touch-none"
+            }, void 0, false, {
+                fileName: "[project]/src/components/FloatingHud.tsx",
+                lineNumber: 183,
+                columnNumber: 7
+            }, this),
+            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+                ...edgeHandleProps('se'),
+                className: "absolute -bottom-1 -right-1 w-3 h-3 cursor-nwse-resize touch-none"
+            }, void 0, false, {
+                fileName: "[project]/src/components/FloatingHud.tsx",
+                lineNumber: 184,
+                columnNumber: 7
+            }, this),
+            isBusy && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
                 className: "fixed inset-0 z-[-1]"
             }, void 0, false, {
                 fileName: "[project]/src/components/FloatingHud.tsx",
-                lineNumber: 82,
-                columnNumber: 20
+                lineNumber: 186,
+                columnNumber: 18
             }, this)
         ]
     }, void 0, true, {
         fileName: "[project]/src/components/FloatingHud.tsx",
-        lineNumber: 51,
+        lineNumber: 139,
         columnNumber: 5
     }, this);
 }
-_s(FloatingHud, "S+iTiTb5GxbVr6zQsWnuU59I41Q=");
+_s(FloatingHud, "4NYL5HxRnjhZItnt9dttaLMtCpk=");
 _c = FloatingHud;
 var _c;
 __turbopack_context__.k.register(_c, "FloatingHud");
@@ -2504,118 +2668,51 @@ if (typeof globalThis.$RefreshHelpers$ === 'object' && globalThis.$RefreshHelper
     __turbopack_context__.k.registerExports(__turbopack_context__.m, globalThis.$RefreshHelpers$);
 }
 }),
-"[project]/src/components/UploadZone.tsx [app-client] (ecmascript)", ((__turbopack_context__) => {
-"use strict";
+"[project]/src/components/UploadZone.tsx [app-client] (ecmascript)", ((__turbopack_context__, module, exports) => {
 
-__turbopack_context__.s([
-    "UploadZone",
-    ()=>UploadZone
-]);
-var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__ = __turbopack_context__.i("[project]/node_modules/next/dist/compiled/react/jsx-dev-runtime.js [app-client] (ecmascript)");
-var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__ = __turbopack_context__.i("[project]/node_modules/next/dist/compiled/react/index.js [app-client] (ecmascript)");
-var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$clsx$2f$dist$2f$clsx$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__ = __turbopack_context__.i("[project]/node_modules/clsx/dist/clsx.mjs [app-client] (ecmascript)");
-var __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$components$2f$icons$2e$tsx__$5b$app$2d$client$5d$__$28$ecmascript$29$__ = __turbopack_context__.i("[project]/src/components/icons.tsx [app-client] (ecmascript)");
-;
-var _s = __turbopack_context__.k.signature();
-'use client';
-;
-;
-;
-function UploadZone({ onFile }) {
-    _s();
-    const [over, setOver] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useState"])(false);
-    const inputRef = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useRef"])(null);
-    const handleDrop = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useCallback"])({
-        "UploadZone.useCallback[handleDrop]": (e)=>{
-            e.preventDefault();
-            setOver(false);
-            const f = e.dataTransfer.files[0];
-            if (f) onFile(f);
-        }
-    }["UploadZone.useCallback[handleDrop]"], [
-        onFile
-    ]);
-    return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-        onDragOver: (e)=>{
-            e.preventDefault();
-            setOver(true);
-        },
-        onDragLeave: ()=>setOver(false),
-        onDrop: handleDrop,
-        onClick: ()=>inputRef.current?.click(),
-        className: (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$clsx$2f$dist$2f$clsx$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__["default"])('relative border-[1.5px] border-dashed rounded-xl px-6 py-10 sm:py-12 text-center cursor-pointer transition-colors mb-5', over ? 'border-accent bg-accent/5' : 'border-border hover:border-accent/60'),
-        children: [
-            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("input", {
-                ref: inputRef,
-                type: "file",
-                accept: "image/*",
-                multiple: true,
-                className: "hidden",
-                onChange: (e)=>{
-                    const files = e.target.files;
-                    if (files) Array.from(files).forEach(onFile);
-                    e.target.value = '';
-                }
-            }, void 0, false, {
-                fileName: "[project]/src/components/UploadZone.tsx",
-                lineNumber: 36,
-                columnNumber: 7
-            }, this),
-            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$components$2f$icons$2e$tsx__$5b$app$2d$client$5d$__$28$ecmascript$29$__["Icons"].Upload, {
-                className: "w-8 h-8 mx-auto mb-2.5 text-muted",
-                strokeWidth: 1.5
-            }, void 0, false, {
-                fileName: "[project]/src/components/UploadZone.tsx",
-                lineNumber: 48,
-                columnNumber: 7
-            }, this),
-            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
-                className: "text-sm font-medium mb-1",
-                children: "Drop images or tap to upload"
-            }, void 0, false, {
-                fileName: "[project]/src/components/UploadZone.tsx",
-                lineNumber: 49,
-                columnNumber: 7
-            }, this),
-            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
-                className: "text-xs text-muted",
-                children: [
-                    "PNG, JPG, WebP · multiple frames supported ·",
-                    ' ',
-                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
-                        className: "text-accent",
-                        children: "tap regions to extract as layers"
-                    }, void 0, false, {
-                        fileName: "[project]/src/components/UploadZone.tsx",
-                        lineNumber: 52,
-                        columnNumber: 9
-                    }, this)
-                ]
-            }, void 0, true, {
-                fileName: "[project]/src/components/UploadZone.tsx",
-                lineNumber: 50,
-                columnNumber: 7
-            }, this)
-        ]
-    }, void 0, true, {
-        fileName: "[project]/src/components/UploadZone.tsx",
-        lineNumber: 26,
-        columnNumber: 5
-    }, this);
-}
-_s(UploadZone, "fwE3TsVDZHJSGwoGbnX4M5qWS4Y=");
-_c = UploadZone;
-var _c;
-__turbopack_context__.k.register(_c, "UploadZone");
 if (typeof globalThis.$RefreshHelpers$ === 'object' && globalThis.$RefreshHelpers !== null) {
     __turbopack_context__.k.registerExports(__turbopack_context__.m, globalThis.$RefreshHelpers$);
 }
 }),
-"[project]/src/components/icons.tsx [app-client] (ecmascript)", ((__turbopack_context__, module, exports) => {
+"[project]/src/components/icons.tsx [app-client] (ecmascript)", ((__turbopack_context__) => {
+"use strict";
 
-var e = new Error("Could not parse module '[project]/src/components/icons.tsx'\n\nExpected ',', got ':'");
-e.code = 'MODULE_UNPARSABLE';
-throw e;
+__turbopack_context__.s([
+    "Icons",
+    ()=>Icons
+]);
+var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$image$2d$plus$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__ImagePlus$3e$__ = __turbopack_context__.i("[project]/node_modules/lucide-react/dist/esm/icons/image-plus.mjs [app-client] (ecmascript) <export default as ImagePlus>");
+var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$layers$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Layers$3e$__ = __turbopack_context__.i("[project]/node_modules/lucide-react/dist/esm/icons/layers.mjs [app-client] (ecmascript) <export default as Layers>");
+var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$maximize$2d$2$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Maximize2$3e$__ = __turbopack_context__.i("[project]/node_modules/lucide-react/dist/esm/icons/maximize-2.mjs [app-client] (ecmascript) <export default as Maximize2>");
+var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$minimize$2d$2$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Minimize2$3e$__ = __turbopack_context__.i("[project]/node_modules/lucide-react/dist/esm/icons/minimize-2.mjs [app-client] (ecmascript) <export default as Minimize2>");
+var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$download$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Download$3e$__ = __turbopack_context__.i("[project]/node_modules/lucide-react/dist/esm/icons/download.mjs [app-client] (ecmascript) <export default as Download>");
+var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$trash$2d$2$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Trash2$3e$__ = __turbopack_context__.i("[project]/node_modules/lucide-react/dist/esm/icons/trash-2.mjs [app-client] (ecmascript) <export default as Trash2>");
+var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$rotate$2d$ccw$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__RotateCcw$3e$__ = __turbopack_context__.i("[project]/node_modules/lucide-react/dist/esm/icons/rotate-ccw.mjs [app-client] (ecmascript) <export default as RotateCcw>");
+var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$loader$2d$circle$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Loader2$3e$__ = __turbopack_context__.i("[project]/node_modules/lucide-react/dist/esm/icons/loader-circle.mjs [app-client] (ecmascript) <export default as Loader2>");
+var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$zap$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Zap$3e$__ = __turbopack_context__.i("[project]/node_modules/lucide-react/dist/esm/icons/zap.mjs [app-client] (ecmascript) <export default as Zap>");
+var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$x$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__X$3e$__ = __turbopack_context__.i("[project]/node_modules/lucide-react/dist/esm/icons/x.mjs [app-client] (ecmascript) <export default as X>");
+var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$grip$2d$vertical$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__GripVertical$3e$__ = __turbopack_context__.i("[project]/node_modules/lucide-react/dist/esm/icons/grip-vertical.mjs [app-client] (ecmascript) <export default as GripVertical>");
+var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$eye$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Eye$3e$__ = __turbopack_context__.i("[project]/node_modules/lucide-react/dist/esm/icons/eye.mjs [app-client] (ecmascript) <export default as Eye>");
+var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$undo$2d$2$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Undo2$3e$__ = __turbopack_context__.i("[project]/node_modules/lucide-react/dist/esm/icons/undo-2.mjs [app-client] (ecmascript) <export default as Undo2>");
+;
+const Icons = {
+    Upload: __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$image$2d$plus$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__ImagePlus$3e$__["ImagePlus"],
+    Layers: __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$layers$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Layers$3e$__["Layers"],
+    Fullscreen: __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$maximize$2d$2$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Maximize2$3e$__["Maximize2"],
+    ExitFullscreen: __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$minimize$2d$2$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Minimize2$3e$__["Minimize2"],
+    Download: __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$download$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Download$3e$__["Download"],
+    Trash: __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$trash$2d$2$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Trash2$3e$__["Trash2"],
+    Reset: __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$rotate$2d$ccw$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__RotateCcw$3e$__["RotateCcw"],
+    Spinner: __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$loader$2d$circle$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Loader2$3e$__["Loader2"],
+    Logo: __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$zap$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Zap$3e$__["Zap"],
+    Close: __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$x$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__X$3e$__["X"],
+    Grip: __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$grip$2d$vertical$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__GripVertical$3e$__["GripVertical"],
+    Eye: __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$eye$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Eye$3e$__["Eye"],
+    Undo: __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$undo$2d$2$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Undo2$3e$__["Undo2"]
+};
+if (typeof globalThis.$RefreshHelpers$ === 'object' && globalThis.$RefreshHelpers !== null) {
+    __turbopack_context__.k.registerExports(__turbopack_context__.m, globalThis.$RefreshHelpers$);
+}
 }),
 "[project]/src/lib/api.ts [app-client] (ecmascript)", ((__turbopack_context__) => {
 "use strict";
@@ -2641,12 +2738,43 @@ async function post(path, body) {
     }
     return res.json();
 }
+// fetch() has no upload-progress event, so uploads that need a % bar go
+// through XMLHttpRequest instead, which fires 'progress' during the send.
+function postWithProgress(path, body, onProgress) {
+    return new Promise((resolve, reject)=>{
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API_BASE}${path}`);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.upload.onprogress = (e)=>{
+            if (e.lengthComputable && onProgress) {
+                onProgress(Math.round(e.loaded / e.total * 100));
+            }
+        };
+        xhr.onload = ()=>{
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                    resolve(JSON.parse(xhr.responseText));
+                } catch  {
+                    reject(new Error(`${path}: invalid JSON response`));
+                }
+            } else {
+                reject(new Error(`${path} failed: ${xhr.status}`));
+            }
+        };
+        xhr.onerror = ()=>reject(new Error(`${path}: network error`));
+        xhr.send(JSON.stringify(body));
+    });
+}
 const api = {
     createSession: ()=>post('/api/session', {}),
     upload: (sessionId, imageDataUrl)=>post('/api/upload', {
             session_id: sessionId,
             image: imageDataUrl
         }),
+    uploadWithProgress: (sessionId, imageDataUrl, onProgress)=>postWithProgress('/api/upload', {
+            session_id: sessionId,
+            image: imageDataUrl
+        }, onProgress),
     segment: (sessionId, x, y)=>post('/api/segment', {
             session_id: sessionId,
             x,
@@ -2656,9 +2784,6 @@ const api = {
             session_id: sessionId,
             x,
             y
-        }),
-    undo: (sessionId)=>post('/api/undo', {
-            session_id: sessionId
         }),
     clear: (sessionId)=>post('/api/clear', {
             session_id: sessionId

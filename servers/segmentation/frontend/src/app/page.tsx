@@ -12,7 +12,6 @@ import { Toast } from '@/components/Toast';
 import { api } from '@/lib/api';
 import { downloadDataUrl } from '@/lib/coords';
 import type { FrameKey } from '@/lib/types';
-import { useState as useStateAlias } from 'react'; // placeholder, remove if unused
 
 export default function Home() {
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -20,8 +19,8 @@ export default function Home() {
   const [coverageImage, setCoverageImage] = useState<string | null>(null); // base64
   const [recomposedImage, setRecomposedImage] = useState<string | null>(null); // base64
   const [gallery, setGallery] = useState<string[]>([]);
-  const [canUndo, setCanUndo] = useState(false);
   const [segmenting, setSegmenting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null); // null = idle, 0-100 = uploading
   const [activeTab, setActiveTab] = useState<FrameKey>('input');
   const [fullscreenFrame, setFullscreenFrame] = useState<Extract<FrameKey, 'input' | 'coverage'> | null>(null);
 
@@ -59,8 +58,9 @@ export default function Home() {
       const reader = new FileReader();
       reader.onload = async (ev) => {
         const full = ev.target?.result as string;
+        setUploadProgress(0);
         try {
-          const d = await api.upload(sessionId, full);
+          const d = await api.uploadWithProgress(sessionId, full, setUploadProgress);
           if (d.error) {
             toast(d.error, true);
             return;
@@ -73,6 +73,8 @@ export default function Home() {
           toast(`Image loaded · ${d.width}×${d.height}px`);
         } catch (err) {
           toast('Upload failed: ' + (err as Error).message, true);
+        } finally {
+          setUploadProgress(null);
         }
       };
       reader.readAsDataURL(file);
@@ -80,11 +82,10 @@ export default function Home() {
     [sessionId, toast]
   );
 
-  const applySegmentResult = useCallback((d: { coverage?: string; recomposed?: string | null; gallery?: string[]; can_undo?: boolean }) => {
+  const applySegmentResult = useCallback((d: { coverage?: string; recomposed?: string | null; gallery?: string[] }) => {
     if (d.coverage) setCoverageImage(d.coverage);
     setRecomposedImage(d.recomposed ?? null);
     setGallery(d.gallery ?? []);
-    setCanUndo(d.can_undo ?? false);
   }, []);
 
   const handleSegment = useCallback(
@@ -126,17 +127,6 @@ export default function Home() {
     [sessionId, applySegmentResult, toast]
   );
 
-  const handleUndo = useCallback(async () => {
-    if (!sessionId) return;
-    const d = await api.undo(sessionId);
-    if (d.error) {
-      toast(d.error, true);
-      return;
-    }
-    applySegmentResult(d);
-    toast('Undone');
-  }, [sessionId, applySegmentResult, toast]);
-
   const handleClear = useCallback(async () => {
     if (!sessionId) return;
     const d = await api.clear(sessionId);
@@ -166,7 +156,6 @@ export default function Home() {
     setCoverageImage(null);
     setRecomposedImage(null);
     setGallery([]);
-    setCanUndo(false);
     setActiveTab('input');
     setFullscreenFrame(null);
     initSession().then(() => toast('Ready for a new image'));
@@ -179,7 +168,7 @@ export default function Home() {
       <Header />
 
       <main className="flex-1 w-full max-w-[1400px] mx-auto px-4 sm:px-7 py-5 sm:py-6">
-        {!hasImage && <UploadZone onFile={handleFile} />}
+        {!hasImage && <UploadZone onFile={handleFile} progress={uploadProgress} />}
 
         {hasImage && (
           <>
@@ -247,8 +236,6 @@ export default function Home() {
             <ActionBar
               layerCount={gallery.length}
               hasRecomposed={!!recomposedImage}
-              onUndo={handleUndo}
-              canUndo={canUndo}
               onRecompose={handleRecompose}
               onDownload={handleDownload}
               onClear={handleClear}

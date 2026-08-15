@@ -11,7 +11,6 @@ import {
   X,
   GripVertical,
   Eye,
-  Undo: Undo2,
   Undo2,
 } from 'lucide-react';
 
@@ -29,5 +28,4 @@ export const Icons = {
   Grip: GripVertical,
   Eye,
   Undo: Undo2,
-  Undo2,
 };
