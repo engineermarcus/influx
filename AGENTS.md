@@ -100,6 +100,14 @@ Linear blend skinning (LBS) is industry standard (Spine, DragonBones, every real
 
 ---
 
+## Session Update — Mesh Guide Was Never Drawing the Mesh
+
+`showMesh` toggle only ever rendered the layer's bounding-box rectangle (4 corners) — `buildGridMesh`'s subdivided grid was computed and stored in `rig.mesh` but never actually rendered anywhere. This is why nothing looked like a mesh; it was a plain rectangle outline the whole time. Fixed: mesh guide is now a `Shape` that draws every triangle edge from `rig.mesh.triangles`, using skinned (posed) vertices for bound layers so the grid itself visibly deforms with bone movement, rest-position vertices for unbound layers.
+
+Still open: the actual bound-layer pixel warp (`drawWarpedMesh`) — math traced correct in the prior session note below, root cause of any remaining non-warping behavior still needs a real symptom (console error, or confirmation the mesh grid itself now warps but the image doesn't).
+
+---
+
 ## Session Update — Undo/History Fixes
 
 Investigated the mesh-deformation bug from the previous session (bound layers not visibly warping when bones move). Traced the full pipeline against actual Konva 10 source: `triangleAffine` solve, `drawWarpedMesh`, `skinVertex`/`applyBoneDelta`, `bindSelected`'s coordinate handling, `ctx._context` access, and Konva's `_setAttr` → `_requestDraw` → `batchDraw` redraw path. All correct — no defect found there. Root cause is still open; needs a real browser test (nothing this sandbox can do — no display, no headless browser download path on the allowed network list) or the actual symptom from testing (console error vs. static-but-not-warping vs. nothing rendering).
