@@ -12,7 +12,6 @@ package-lock.json
 *.bak7
 build/
 .env.local.example
-AGENTS.md 
 CLAUDE.md 
 patch.py 
 patch.sh 
