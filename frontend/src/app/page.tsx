@@ -29,10 +29,6 @@ export default function Home() {
   const [selectedForRig, setSelectedForRig] = useState<Set<number>>(new Set());
   const prevGalleryLenRef = useRef(0);
   const [segmenting, setSegmenting] = useState(false);
-  const [pendingSelection, setPendingSelection] = useState<{ box: [number, number, number, number] } | { x: number; y: number } | null>(null);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
-  const [previewing, setPreviewing] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null); // null = idle, 0-100 = uploading
   const [activeTab, setActiveTab] = useState<FrameKey>('input');
   const [fullscreenFrame, setFullscreenFrame] = useState<Extract<FrameKey, 'input' | 'coverage'> | null>(null);
@@ -144,78 +140,51 @@ export default function Home() {
     [sessionId, applySegmentResult, toast, gallery.length]
   );
 
+  // Direct commit — no preview/confirm round trip. Backend still validates
+  // "empty" via segmentConfirm's own mask check (falls through to the same
+  // session_response with no new layer), so an empty selection just no-ops
+  // instead of adding a blank layer.
   const handleBoxSelect = useCallback(
     async (box: [number, number, number, number]) => {
       if (!sessionId) return;
-      setPendingSelection({ box });
-      setPreviewing(true);
+      setSegmenting(true);
       try {
-        const d = await api.segmentPreview(sessionId, { box });
-        if (d.empty) {
-          toast('Nothing found in that box', true);
-          setPendingSelection(null);
+        const d = await api.segmentConfirm(sessionId, { box });
+        if (d.error) {
+          toast(d.error, true);
           return;
         }
-        setPreviewImage(d.preview);
+        applySegmentResult(d);
+        toast(`Layer ${d.layer_count ?? gallery.length + 1} added`);
       } catch (err) {
-        toast('Preview failed: ' + (err as Error).message, true);
-        setPendingSelection(null);
+        toast('Segment failed: ' + (err as Error).message, true);
       } finally {
-        setPreviewing(false);
+        setSegmenting(false);
       }
     },
-    [sessionId, toast]
+    [sessionId, applySegmentResult, toast, gallery.length]
   );
 
   const handlePointSelect = useCallback(
     async (x: number, y: number) => {
       if (!sessionId) return;
-      const selection = { x, y };
-      setPendingSelection(selection);
-      setPreviewing(true);
+      setSegmenting(true);
       try {
-        const d = await api.segmentPreview(sessionId, selection);
-        if (d.empty) {
-          toast('Nothing found there', true);
-          setPendingSelection(null);
+        const d = await api.segmentConfirm(sessionId, { x, y });
+        if (d.error) {
+          toast(d.error, true);
           return;
         }
-        setPreviewImage(d.preview);
+        applySegmentResult(d);
+        toast(`Layer ${d.layer_count ?? gallery.length + 1} added`);
       } catch (err) {
-        toast('Preview failed: ' + (err as Error).message, true);
-        setPendingSelection(null);
+        toast('Segment failed: ' + (err as Error).message, true);
       } finally {
-        setPreviewing(false);
+        setSegmenting(false);
       }
     },
-    [sessionId, toast]
+    [sessionId, applySegmentResult, toast, gallery.length]
   );
-
-
-  const handleConfirmBox = useCallback(async () => {
-    if (!sessionId || !pendingSelection) return;
-    setConfirming(true);
-    try {
-      const d = await api.segmentConfirm(sessionId, pendingSelection);
-      if (d.error) {
-        toast(d.error, true);
-        return;
-      }
-      applySegmentResult(d);
-      toast(`Layer ${d.layer_count ?? gallery.length + 1} added`);
-    } catch (err) {
-      toast('Confirm failed: ' + (err as Error).message, true);
-    } finally {
-      setConfirming(false);
-      setPendingSelection(null);
-      setPreviewImage(null);
-    }
-  }, [sessionId, pendingSelection, applySegmentResult, toast, gallery.length]);
-
-  const handleCancelBox = useCallback(() => {
-    setPendingSelection(null);
-    setPreviewImage(null);
-  }, []);
 
   const handleRemove = useCallback(
     async (x: number, y: number) => {
@@ -323,14 +292,14 @@ export default function Home() {
               />
               <FramePanel
                 frameKey="coverage"
-                src={previewImage ? dataUrl(previewImage) : dataUrl(coverageImage)}
+                src={dataUrl(coverageImage)}
                 canFullscreen
                 onExpand={() => setFullscreenFrame('coverage')}
                 onBoxSelect={handleBoxSelect}
                 onPointSelect={handlePointSelect}
                 cursorStyle="crosshair"
-                busy={previewing}
-                busyLabel="Analyzing selection…"
+                busy={segmenting}
+                busyLabel="Segmenting…"
               />
               <FramePanel
                 frameKey="recomposed"
@@ -356,14 +325,14 @@ export default function Home() {
               {activeTab === 'coverage' && (
                 <FramePanel
                   frameKey="coverage"
-                  src={previewImage ? dataUrl(previewImage) : dataUrl(coverageImage)}
+                  src={dataUrl(coverageImage)}
                   canFullscreen
                   onExpand={() => setFullscreenFrame('coverage')}
                   onBoxSelect={handleBoxSelect}
                   cursorStyle="crosshair"
                   onPointSelect={handlePointSelect}
-                busy={previewing}
-                busyLabel="Analyzing selection…"
+                busy={segmenting}
+                busyLabel="Segmenting…"
                 />
               )}
               {activeTab === 'recomposed' && (
@@ -379,28 +348,6 @@ export default function Home() {
                 />
               )}
             </div>
-
-            {pendingSelection && (
-              <div className="flex items-center gap-2.5 mb-5 p-3 rounded-lg border border-accent/40 bg-accent/10">
-                <span className="text-xs text-muted flex-1">
-                  {previewing ? "Analyzing selection…" : "Confirm this selection?"}
-                </span>
-                <button
-                  onClick={handleCancelBox}
-                  disabled={confirming}
-                  className="px-3 py-1.5 rounded-md text-xs font-medium bg-raised border border-border text-muted hover:text-text disabled:opacity-40 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleConfirmBox}
-                  disabled={previewing || confirming}
-                  className="px-3 py-1.5 rounded-md text-xs font-semibold bg-accent text-bg hover:opacity-90 disabled:opacity-40 transition-colors"
-                >
-                  {confirming ? "Adding…" : "Confirm"}
-                </button>
-              </div>
-            )}
 
             <ActionBar
               layerCount={gallery.length}

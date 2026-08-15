@@ -17,3 +17,4 @@ patch.py
 patch.sh 
 .next
 patch*
+segmentation-gpu-server

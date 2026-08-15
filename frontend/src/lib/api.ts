@@ -52,35 +52,35 @@ function postWithProgress<T>(
 }
 
 export const api = {
-  createSession: () => post<{ session_id: string }>('/api/session', {}),
+  createSession: () => post<{ session_id: string }>('/app/session', {}),
 
   upload: (sessionId: string, imageDataUrl: string) =>
-    post<UploadResponse>('/api/upload', { session_id: sessionId, image: imageDataUrl }),
+    post<UploadResponse>('/app/upload', { session_id: sessionId, image: imageDataUrl }),
 
   uploadWithProgress: (sessionId: string, imageDataUrl: string, onProgress: (pct: number) => void) =>
     postWithProgress<UploadResponse>(
-      '/api/upload',
+      '/app/upload',
       { session_id: sessionId, image: imageDataUrl },
       onProgress
     ),
 
   segment: (sessionId: string, x: number, y: number) =>
-    post<SegmentResponse>('/api/segment', { session_id: sessionId, x, y }),
+    post<SegmentResponse>('/app/segment', { session_id: sessionId, x, y }),
 
   segmentPreview: (sessionId: string, selection: { box: [number, number, number, number] } | { x: number; y: number }) =>
-    post<{ preview: string; empty: boolean; pixel_count: number }>('/api/segment_preview', { session_id: sessionId, ...selection }),
+    post<{ preview: string; empty: boolean; pixel_count: number }>('/app/segment_preview', { session_id: sessionId, ...selection }),
 
   segmentConfirm: (sessionId: string, selection: { box: [number, number, number, number] } | { x: number; y: number }) =>
-    post<SegmentResponse>('/api/segment_confirm', { session_id: sessionId, ...selection }),
+    post<SegmentResponse>('/app/segment_confirm', { session_id: sessionId, ...selection }),
 
   remove: (sessionId: string, x: number, y: number) =>
-    post<SegmentResponse>('/api/remove', { session_id: sessionId, x, y }),
+    post<SegmentResponse>('/app/remove', { session_id: sessionId, x, y }),
 
   undo: (sessionId: string) =>
-    post<SegmentResponse>('/api/undo', { session_id: sessionId }),
+    post<SegmentResponse>('/app/undo', { session_id: sessionId }),
   clear: (sessionId: string) =>
-    post<SegmentResponse>('/api/clear', { session_id: sessionId }),
+    post<SegmentResponse>('/app/clear', { session_id: sessionId }),
 
   recompose: (sessionId: string) =>
-    post<SegmentResponse>('/api/recompose', { session_id: sessionId }),
+    post<SegmentResponse>('/app/recompose', { session_id: sessionId }),
 };

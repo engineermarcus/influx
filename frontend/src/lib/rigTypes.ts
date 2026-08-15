@@ -15,8 +15,3 @@ export interface LayerMeta {
   h: number;
 }
 
-export const ROOT_BONE_ID = 'root';
-
-export function makeRootBone(): Bone {
-  return { id: ROOT_BONE_ID, name: 'Root', parentId: null, x: 0, y: 0, rotation: 0, scale: 1 };
-}
