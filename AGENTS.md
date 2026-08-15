@@ -100,6 +100,21 @@ Linear blend skinning (LBS) is industry standard (Spine, DragonBones, every real
 
 ---
 
+## Session Update — Undo/History Fixes
+
+Investigated the mesh-deformation bug from the previous session (bound layers not visibly warping when bones move). Traced the full pipeline against actual Konva 10 source: `triangleAffine` solve, `drawWarpedMesh`, `skinVertex`/`applyBoneDelta`, `bindSelected`'s coordinate handling, `ctx._context` access, and Konva's `_setAttr` → `_requestDraw` → `batchDraw` redraw path. All correct — no defect found there. Root cause is still open; needs a real browser test (nothing this sandbox can do — no display, no headless browser download path on the allowed network list) or the actual symptom from testing (console error vs. static-but-not-warping vs. nothing rendering).
+
+Found and fixed two real bugs while tracing it, in `lib/rigHistory.ts` and `components/RigCanvas.tsx`:
+
+- `useHistoryState.setState` pushed to `undoStack.current` **inside** the `setStateInternal` updater. Next.js defaults to React Strict Mode, which double-invokes updaters in dev — duplicate undo entries on every single mutation. Fixed by moving the push outside the updater into a new `pushHistory()`.
+- `onBoneDragMove`/`onHandleDragMove` called the undo-tracked `setState` on every drag-move frame, burning through the 50-entry cap in a single drag gesture. Added `setStateLive` (no history push) for continuous drag frames, with `pushHistory()` called once on drag-start so undo still restores the pre-drag pose in one step.
+
+`useHistoryState` now returns `{ state, setState, setStateLive, pushHistory, undo, redo, canUndo, canRedo }` (added `setStateLive` and `pushHistory`).
+
+Also flagged by eslint (`react-hooks/refs`), not yet fixed: `layerRigsRef.current` (mesh/weights cache) is read directly during render inside the JSX `.map()` over layers in `RigCanvas.tsx`. Works today because `bindSelected()` pairs the ref mutation with a `setState` call, but it's an anti-pattern — reading ref `.current` during render is unsafe under React's rules and worth migrating to state or a safer cache pattern.
+
+---
+
 ## Current Limitations - Fix Next Session
 
 1. MESH DEFORMATION NOT VISIBLE - HIGH PRIORITY
