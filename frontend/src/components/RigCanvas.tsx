@@ -44,7 +44,7 @@ interface LayerRig {
 }
 
 export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanvasProps) {
-  const { state, setState, undo, redo, canUndo, canRedo } = useHistoryState<RigState>({
+  const { state, setState, setStateLive, pushHistory, undo, redo, canUndo, canRedo } = useHistoryState<RigState>({
     bones: [makeRootBone()],
     bindings: {},
   });
@@ -221,12 +221,12 @@ export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanv
       const parentWorld = bone.parentId ? worldTransforms.get(bone.parentId) ?? IDENTITY_TRANSFORM : IDENTITY_TRANSFORM;
       const pos = screenToWorld({ x: e.target.x(), y: e.target.y() });
       const local = worldToLocalPoint(parentWorld, pos);
-      setState((prev) => ({
+      setStateLive((prev) => ({
         ...prev,
         bones: prev.bones.map((b) => (b.id === boneId ? { ...b, x: local.x, y: local.y } : b)),
       }));
     },
-    [boneById, worldTransforms, screenToWorld, setState]
+    [boneById, worldTransforms, screenToWorld, setStateLive]
   );
 
   const onHandleDragMove = useCallback(
@@ -237,12 +237,12 @@ export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanv
       const boneWorld = worldTransforms.get(boneId) ?? IDENTITY_TRANSFORM;
       const pos = screenToWorld({ x: e.target.x(), y: e.target.y() });
       const angle = angleBetween(boneWorld, pos);
-      setState((prev) => ({
+      setStateLive((prev) => ({
         ...prev,
         bones: prev.bones.map((b) => (b.id === boneId ? { ...b, rotation: angle - parentWorld.rotation } : b)),
       }));
     },
-    [boneById, worldTransforms, screenToWorld, setState]
+    [boneById, worldTransforms, screenToWorld, setStateLive]
   );
 
   const bindSelected = useCallback(() => {
@@ -495,7 +495,10 @@ export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanv
                       fill={selected ? '#f5a524' : '#4dd0e1'}
                       stroke={selected ? '#f5a524' : '#4dd0e1'}
                       draggable
-                      onDragStart={() => setSelectedBoneId(b.id)}
+                      onDragStart={() => {
+                        setSelectedBoneId(b.id);
+                        pushHistory();
+                      }}
                       onDragMove={onBoneDragMove(b.id)}
                     />
                     {showMesh && (
@@ -515,6 +518,7 @@ export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanv
                         radius={5 / camera.scale}
                         fill="#f5a524"
                         draggable
+                        onDragStart={pushHistory}
                         onDragMove={onHandleDragMove(b.id)}
                       />
                     )}

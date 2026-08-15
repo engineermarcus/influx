@@ -19,22 +19,35 @@ export function useHistoryState<T>(initial: T) {
     setCanRedo(redoStack.current.length > 0);
   }, []);
 
+  // Snapshot the current state onto the undo stack without changing state.
+  // Side effects live here, outside any setState updater, so React's Strict
+  // Mode double-invoking an updater (dev only) can't double-push a snapshot.
+  const pushHistory = useCallback(() => {
+    undoStack.current.push(state);
+    if (undoStack.current.length > MAX_HISTORY) undoStack.current.shift();
+    redoStack.current = [];
+    syncFlags();
+  }, [state, syncFlags]);
+
   // Call this instead of setState directly whenever a mutation should be
   // undoable. Pushes the CURRENT state onto the undo stack before applying
   // the update, and clears the redo stack (standard editor behavior — a
   // fresh edit invalidates the old redo branch).
   const setState = useCallback(
     (updater: T | ((prev: T) => T)) => {
-      setStateInternal((prev) => {
-        undoStack.current.push(prev);
-        if (undoStack.current.length > MAX_HISTORY) undoStack.current.shift();
-        redoStack.current = [];
-        syncFlags();
-        return typeof updater === 'function' ? (updater as (prev: T) => T)(prev) : updater;
-      });
+      pushHistory();
+      setStateInternal(updater);
     },
-    [syncFlags]
+    [pushHistory]
   );
+
+  // Update state WITHOUT touching the undo stack. Use for continuous
+  // gestures (drag-move) where every intermediate frame would otherwise
+  // burn a history slot; pair with pushHistory() once at gesture start so
+  // undo still restores the pre-gesture pose in a single step.
+  const setStateLive = useCallback((updater: T | ((prev: T) => T)) => {
+    setStateInternal(updater);
+  }, []);
 
   const undo = useCallback(() => {
     setStateInternal((prev) => {
@@ -56,5 +69,5 @@ export function useHistoryState<T>(initial: T) {
     });
   }, [syncFlags]);
 
-  return { state, setState, undo, redo, canUndo, canRedo };
+  return { state, setState, setStateLive, pushHistory, undo, redo, canUndo, canRedo };
 }
