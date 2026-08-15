@@ -1,14 +1,16 @@
 'use client';
 import { useState, useRef, useMemo, useCallback, useEffect } from 'react';
+import { Stage, Layer, Circle, Line, Text, Shape, Group, Image as KonvaImage } from 'react-konva';
+import type Konva from 'konva';
 import { Icons } from './icons';
 import type { Bone, LayerMeta } from '@/lib/rigTypes';
 import { makeRootBone, ROOT_BONE_ID } from '@/lib/rigTypes';
-import { composeTransform, worldToLocalPoint, angleBetween, IDENTITY_TRANSFORM } from '@/lib/rigMath';
+import { composeTransform, worldToLocalPoint, angleBetween, IDENTITY_TRANSFORM, skinVertex } from '@/lib/rigMath';
 import type { WorldTransform, Vec2 } from '@/lib/rigMath';
 import { buildGridMesh, autoWeightByDistance } from '@/lib/rigMesh';
 import type { Mesh, BoneInfluence } from '@/lib/rigMesh';
-import { skinVertex } from '@/lib/rigMath';
 import { drawWarpedMesh } from '@/lib/rigWarp';
+import { useHistoryState } from '@/lib/rigHistory';
 
 interface RigLayerInput {
   image: string; // base64, no data: prefix
@@ -22,37 +24,72 @@ interface RigCanvasProps {
   onExit: () => void;
 }
 
-const DISPLAY_W = 880;
-const HANDLE_SCREEN_LEN = 42;
-const GRID_STEP_IMG_PX = 50;
+const STAGE_W = 880;
+const STAGE_H = 620;
 const MESH_COLS = 6;
 const MESH_ROWS = 6;
+const MIN_ZOOM = 0.2;
+const MAX_ZOOM = 5;
 
-// Per-layer state needed for mesh deformation, keyed by layer index.
+interface RigState {
+  bones: Bone[];
+  bindings: Record<number, string | null>;
+}
+
 interface LayerRig {
   mesh: Mesh;
-  weights: BoneInfluence[][]; // one entry per mesh vertex
-  boneRestPoses: Map<string, WorldTransform>; // captured at bind time
+  weights: BoneInfluence[][];
+  boneRestPoses: Map<string, WorldTransform>;
   image: HTMLImageElement;
 }
 
 export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanvasProps) {
-  const [bones, setBones] = useState<Bone[]>([makeRootBone()]);
-  const [bindings, setBindings] = useState<Record<number, string | null>>({});
+  const { state, setState, undo, redo, canUndo, canRedo } = useHistoryState<RigState>({
+    bones: [makeRootBone()],
+    bindings: {},
+  });
+  const { bones, bindings } = state;
+
   const [selectedBoneId, setSelectedBoneId] = useState<string | null>(ROOT_BONE_ID);
   const [selectedLayerIdx, setSelectedLayerIdx] = useState<number | null>(null);
   const [addMode, setAddMode] = useState(false);
   const [showMesh, setShowMesh] = useState(true);
 
-  const stageRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ kind: 'bone' | 'handle'; boneId: string; pointerId: number } | null>(null);
-  const layerRigsRef = useRef<Map<number, LayerRig>>(new Map());
-  const canvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map());
-  const [loadedImages, setLoadedImages] = useState<Record<number, boolean>>({});
+  // Camera: Konva Stage's own x/y/scale, so pan+zoom is native, not hand-rolled.
+  const [camera, setCamera] = useState({ x: 0, y: 0, scale: 1 });
+  const stageDragging = useRef(false);
 
-  const scale = imageDims.w > 0 ? DISPLAY_W / imageDims.w : 1;
-  const displayH = imageDims.h * scale;
-  const gridStepScreen = GRID_STEP_IMG_PX * scale;
+  const layerRigsRef = useRef<Map<number, LayerRig>>(new Map());
+  const [loadedImages, setLoadedImages] = useState<Record<number, boolean>>({});
+  const [refImg, setRefImg] = useState<HTMLImageElement | null>(null);
+
+  // Fit-to-view scale so the full imageDims box is visible inside the stage on load.
+  const baseScale = imageDims.w > 0 ? Math.min(STAGE_W / imageDims.w, STAGE_H / imageDims.h) : 1;
+
+  useEffect(() => {
+    setCamera({ x: 0, y: 0, scale: baseScale });
+  }, [baseScale]);
+
+  useEffect(() => {
+    if (!referenceImage) {
+      setRefImg(null);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => setRefImg(img);
+    img.src = referenceImage;
+  }, [referenceImage]);
+
+  useEffect(() => {
+    layers.forEach((layer, i) => {
+      if (layerRigsRef.current.has(i)) return;
+      const img = new Image();
+      img.onload = () => setLoadedImages((prev) => ({ ...prev, [i]: true }));
+      img.src = `data:image/png;base64,${layer.image}`;
+      const mesh = buildGridMesh(layer.meta.w, layer.meta.h, MESH_COLS, MESH_ROWS);
+      layerRigsRef.current.set(i, { mesh, weights: [], boneRestPoses: new Map(), image: img });
+    });
+  }, [layers]);
 
   const worldTransforms = useMemo(() => {
     const map = new Map<string, WorldTransform>();
@@ -69,41 +106,96 @@ export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanv
     return map;
   }, [bones]);
 
-  const toScreen = useCallback((p: { x: number; y: number }) => ({ x: p.x * scale, y: p.y * scale }), [scale]);
+  // ── Zoom: wheel over the stage ──────────────────────────────────────────
+  const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
+    e.evt.preventDefault();
+    const stage = e.target.getStage();
+    if (!stage) return;
+    const pointer = stage.getPointerPosition();
+    if (!pointer) return;
 
-  const clientToImageSpace = useCallback(
-    (clientX: number, clientY: number) => {
-      const rect = stageRef.current?.getBoundingClientRect();
-      if (!rect) return { x: 0, y: 0 };
-      return { x: (clientX - rect.left) / scale, y: (clientY - rect.top) / scale };
+    setCamera((prev) => {
+      const direction = e.evt.deltaY > 0 ? -1 : 1;
+      const factor = 1.08;
+      const newScale = direction > 0 ? prev.scale * factor : prev.scale / factor;
+      const clamped = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newScale));
+
+      // Zoom toward the pointer, not the origin.
+      const mousePointTo = {
+        x: (pointer.x - prev.x) / prev.scale,
+        y: (pointer.y - prev.y) / prev.scale,
+      };
+      return {
+        scale: clamped,
+        x: pointer.x - mousePointTo.x * clamped,
+        y: pointer.y - mousePointTo.y * clamped,
+      };
+    });
+  }, []);
+
+  // ── Pan: middle-mouse drag, or left-drag on empty stage background ──────
+  const handleStageMouseDown = useCallback(
+    (e: Konva.KonvaEventObject<MouseEvent>) => {
+      const isMiddle = e.evt.button === 1;
+      const isEmptyClick = e.target === e.target.getStage();
+      if (isMiddle || (isEmptyClick && !addMode)) {
+        stageDragging.current = true;
+        e.evt.preventDefault();
+      }
     },
-    [scale]
+    [addMode]
   );
 
-  // Preload each layer's image into an HTMLImageElement so it can be drawn to canvas.
-  useEffect(() => {
-    layers.forEach((layer, i) => {
-      if (layerRigsRef.current.has(i)) return;
-      const img = new Image();
-      img.onload = () => {
-        setLoadedImages((prev) => ({ ...prev, [i]: true }));
-      };
-      img.src = `data:image/png;base64,${layer.image}`;
-      // Mesh is built in the layer's own local pixel space (0,0 = crop top-left).
-      const mesh = buildGridMesh(layer.meta.w, layer.meta.h, MESH_COLS, MESH_ROWS);
-      layerRigsRef.current.set(i, {
-        mesh,
-        weights: [],
-        boneRestPoses: new Map(),
-        image: img,
-      });
-    });
-  }, [layers]);
+  const dragStartRef = useRef<{ x: number; y: number; camX: number; camY: number } | null>(null);
+
+  const handleStageMouseDownCapture = useCallback(
+    (e: Konva.KonvaEventObject<MouseEvent>) => {
+      if (stageDragging.current) {
+        dragStartRef.current = { x: e.evt.clientX, y: e.evt.clientY, camX: camera.x, camY: camera.y };
+      }
+    },
+    [camera]
+  );
+
+  const handleStageMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+    const start = dragStartRef.current;
+    if (!stageDragging.current || !start) return;
+    const dx = e.evt.clientX - start.x;
+    const dy = e.evt.clientY - start.y;
+    setCamera((prev) => ({ ...prev, x: start.camX + dx, y: start.camY + dy }));
+  }, []);
+
+  const handleStageMouseUp = useCallback(() => {
+    stageDragging.current = false;
+    dragStartRef.current = null;
+  }, []);
+
+  const zoomIn = useCallback(() => {
+    setCamera((prev) => ({ ...prev, scale: Math.min(MAX_ZOOM, prev.scale * 1.25) }));
+  }, []);
+  const zoomOut = useCallback(() => {
+    setCamera((prev) => ({ ...prev, scale: Math.max(MIN_ZOOM, prev.scale / 1.25) }));
+  }, []);
+  const resetView = useCallback(() => {
+    setCamera({ x: 0, y: 0, scale: baseScale });
+  }, [baseScale]);
+
+  // Convert a Konva stage pointer position (screen px) to world/image space.
+  const screenToWorld = useCallback(
+    (pt: { x: number; y: number }) => ({
+      x: (pt.x - camera.x) / camera.scale,
+      y: (pt.y - camera.y) / camera.scale,
+    }),
+    [camera]
+  );
 
   const handleStageClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (!addMode || e.target !== stageRef.current) return;
-      const pos = clientToImageSpace(e.clientX, e.clientY);
+    (e: Konva.KonvaEventObject<MouseEvent>) => {
+      if (!addMode || e.target !== e.target.getStage()) return;
+      const stage = e.target.getStage();
+      const pointer = stage?.getPointerPosition();
+      if (!pointer) return;
+      const pos = screenToWorld(pointer);
       const parentId = selectedBoneId ?? ROOT_BONE_ID;
       const parentWorld = worldTransforms.get(parentId) ?? IDENTITY_TRANSFORM;
       const local = worldToLocalPoint(parentWorld, pos);
@@ -116,54 +208,46 @@ export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanv
         rotation: 0,
         scale: 1,
       };
-      setBones((prev) => [...prev, newBone]);
+      setState((prev) => ({ ...prev, bones: [...prev.bones, newBone] }));
       setSelectedBoneId(newBone.id);
     },
-    [addMode, clientToImageSpace, selectedBoneId, worldTransforms, bones.length]
+    [addMode, screenToWorld, selectedBoneId, worldTransforms, bones.length, setState]
   );
 
-  const startDrag = useCallback(
-    (kind: 'bone' | 'handle', boneId: string) => (e: React.PointerEvent) => {
-      e.stopPropagation();
-      dragRef.current = { kind, boneId, pointerId: e.pointerId };
-      (e.target as Element).setPointerCapture(e.pointerId);
-      setSelectedBoneId(boneId);
-    },
-    []
-  );
-
-  const onDragMove = useCallback(
-    (e: React.PointerEvent) => {
-      const drag = dragRef.current;
-      if (!drag || drag.pointerId !== e.pointerId) return;
-      const bone = boneById.get(drag.boneId);
+  const onBoneDragMove = useCallback(
+    (boneId: string) => (e: Konva.KonvaEventObject<DragEvent>) => {
+      const bone = boneById.get(boneId);
       if (!bone) return;
       const parentWorld = bone.parentId ? worldTransforms.get(bone.parentId) ?? IDENTITY_TRANSFORM : IDENTITY_TRANSFORM;
-      const pos = clientToImageSpace(e.clientX, e.clientY);
-
-      if (drag.kind === 'bone') {
-        const local = worldToLocalPoint(parentWorld, pos);
-        setBones((prev) => prev.map((b) => (b.id === bone.id ? { ...b, x: local.x, y: local.y } : b)));
-      } else {
-        const boneWorld = worldTransforms.get(bone.id) ?? IDENTITY_TRANSFORM;
-        const angle = angleBetween(boneWorld, pos);
-        setBones((prev) => prev.map((b) => (b.id === bone.id ? { ...b, rotation: angle - parentWorld.rotation } : b)));
-      }
+      const pos = screenToWorld({ x: e.target.x(), y: e.target.y() });
+      const local = worldToLocalPoint(parentWorld, pos);
+      setState((prev) => ({
+        ...prev,
+        bones: prev.bones.map((b) => (b.id === boneId ? { ...b, x: local.x, y: local.y } : b)),
+      }));
     },
-    [boneById, worldTransforms, clientToImageSpace]
+    [boneById, worldTransforms, screenToWorld, setState]
   );
 
-  const endDrag = useCallback(() => {
-    dragRef.current = null;
-  }, []);
+  const onHandleDragMove = useCallback(
+    (boneId: string) => (e: Konva.KonvaEventObject<DragEvent>) => {
+      const bone = boneById.get(boneId);
+      if (!bone) return;
+      const parentWorld = bone.parentId ? worldTransforms.get(bone.parentId) ?? IDENTITY_TRANSFORM : IDENTITY_TRANSFORM;
+      const boneWorld = worldTransforms.get(boneId) ?? IDENTITY_TRANSFORM;
+      const pos = screenToWorld({ x: e.target.x(), y: e.target.y() });
+      const angle = angleBetween(boneWorld, pos);
+      setState((prev) => ({
+        ...prev,
+        bones: prev.bones.map((b) => (b.id === boneId ? { ...b, rotation: angle - parentWorld.rotation } : b)),
+      }));
+    },
+    [boneById, worldTransforms, screenToWorld, setState]
+  );
 
-  // Binding a layer to a bone captures the CURRENT world transforms of every
-  // bone as that layer's "rest pose" reference, and computes vertex weights
-  // relative to bone positions at this moment. Re-binding recalculates both,
-  // which lets you re-anchor a layer if you move bones before binding.
   const bindSelected = useCallback(() => {
     if (selectedLayerIdx === null || !selectedBoneId) return;
-    setBindings((prev) => ({ ...prev, [selectedLayerIdx]: selectedBoneId }));
+    setState((prev) => ({ ...prev, bindings: { ...prev.bindings, [selectedLayerIdx]: selectedBoneId } }));
 
     const rig = layerRigsRef.current.get(selectedLayerIdx);
     const meta = layers[selectedLayerIdx]?.meta;
@@ -172,72 +256,29 @@ export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanv
     const boneRestPoses = new Map<string, WorldTransform>();
     for (const [id, wt] of worldTransforms.entries()) boneRestPoses.set(id, wt);
 
-    // Bone positions relative to this layer's local mesh space, for weighting.
     const bonePositionsLocal = new Map<string, Vec2>();
     for (const [id, wt] of worldTransforms.entries()) {
       bonePositionsLocal.set(id, { x: wt.x - meta.x, y: wt.y - meta.y });
     }
 
     const weights = autoWeightByDistance(rig.mesh.vertices, bonePositionsLocal, 3, 2);
-
-    layerRigsRef.current.set(selectedLayerIdx, {
-      ...rig,
-      weights,
-      boneRestPoses,
-    });
-  }, [selectedLayerIdx, selectedBoneId, worldTransforms, layers]);
+    layerRigsRef.current.set(selectedLayerIdx, { ...rig, weights, boneRestPoses });
+  }, [selectedLayerIdx, selectedBoneId, worldTransforms, layers, setState]);
 
   const canDeleteSelected =
     selectedBoneId !== null && selectedBoneId !== ROOT_BONE_ID && !bones.some((b) => b.parentId === selectedBoneId);
 
   const deleteSelected = useCallback(() => {
     if (!canDeleteSelected || !selectedBoneId) return;
-    setBones((prev) => prev.filter((b) => b.id !== selectedBoneId));
-    setBindings((prev) => {
-      const next = { ...prev };
-      for (const k of Object.keys(next)) {
-        if (next[Number(k)] === selectedBoneId) next[Number(k)] = null;
+    setState((prev) => {
+      const nextBindings = { ...prev.bindings };
+      for (const k of Object.keys(nextBindings)) {
+        if (nextBindings[Number(k)] === selectedBoneId) nextBindings[Number(k)] = null;
       }
-      return next;
+      return { bones: prev.bones.filter((b) => b.id !== selectedBoneId), bindings: nextBindings };
     });
     setSelectedBoneId(ROOT_BONE_ID);
-  }, [canDeleteSelected, selectedBoneId]);
-
-  // Re-render every bound layer's canvas whenever bone poses change.
-  useEffect(() => {
-    layers.forEach((layer, i) => {
-      const boneId = bindings[i];
-      if (!boneId) return;
-      const rig = layerRigsRef.current.get(i);
-      const canvas = canvasRefs.current.get(i);
-      if (!rig || !canvas || !rig.weights.length || !loadedImages[i]) return;
-
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      const restVertices = rig.mesh.vertices; // local space, unscaled
-      const posedVertices = restVertices.map((v, vi) => {
-        const posedLocal = skinVertex(
-          { x: v.x + layer.meta.x, y: v.y + layer.meta.y }, // rest point in full-image space
-          rig.weights[vi] ?? [],
-          rig.boneRestPoses,
-          worldTransforms
-        );
-        // Convert to screen space for drawing.
-        return toScreen(posedLocal);
-      });
-      const restScreenVertices = restVertices.map((v) => toScreen({ x: v.x, y: v.y }));
-
-      drawWarpedMesh({
-        ctx,
-        image: rig.image,
-        mesh: rig.mesh,
-        restVertices: restScreenVertices,
-        posedVertices,
-      });
-    });
-  }, [bindings, worldTransforms, layers, loadedImages, toScreen]);
+  }, [canDeleteSelected, selectedBoneId, setState]);
 
   return (
     <div className="flex flex-col lg:flex-row gap-4">
@@ -276,6 +317,39 @@ export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanv
           >
             Mesh guides: {showMesh ? 'On' : 'Off'}
           </button>
+
+          <div className="w-px h-5 bg-border mx-1" />
+
+          <button
+            onClick={undo}
+            disabled={!canUndo}
+            className="px-2.5 py-1.5 rounded-md text-xs font-medium bg-raised border border-border text-muted hover:text-text disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            title="Undo"
+          >
+            <Icons.Undo className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={redo}
+            disabled={!canRedo}
+            className="px-2.5 py-1.5 rounded-md text-xs font-medium bg-raised border border-border text-muted hover:text-text disabled:opacity-40 disabled:cursor-not-allowed transition-colors scale-x-[-1]"
+            title="Redo"
+          >
+            <Icons.Undo className="w-3.5 h-3.5" />
+          </button>
+
+          <div className="w-px h-5 bg-border mx-1" />
+
+          <button onClick={zoomOut} className="px-2.5 py-1.5 rounded-md text-xs font-medium bg-raised border border-border text-muted hover:text-text transition-colors" title="Zoom out">
+            −
+          </button>
+          <span className="text-xs text-dim w-12 text-center tabular-nums">{Math.round(camera.scale * 100)}%</span>
+          <button onClick={zoomIn} className="px-2.5 py-1.5 rounded-md text-xs font-medium bg-raised border border-border text-muted hover:text-text transition-colors" title="Zoom in">
+            +
+          </button>
+          <button onClick={resetView} className="px-2.5 py-1.5 rounded-md text-xs font-medium bg-raised border border-border text-muted hover:text-text transition-colors" title="Reset view">
+            <Icons.Fullscreen className="w-3.5 h-3.5" />
+          </button>
+
           <button
             onClick={onExit}
             className="ml-auto px-3 py-1.5 rounded-md text-xs font-medium bg-raised border border-border text-muted hover:text-text transition-colors"
@@ -285,158 +359,172 @@ export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanv
           </button>
         </div>
 
-        <div
-          ref={stageRef}
-          onClick={handleStageClick}
-          onPointerMove={onDragMove}
-          onPointerUp={endDrag}
-          onPointerCancel={endDrag}
-          style={{
-            width: DISPLAY_W,
-            height: displayH,
-            backgroundImage: showMesh
-              ? `linear-gradient(to right, rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.06) 1px, transparent 1px)`
-              : undefined,
-            backgroundSize: showMesh ? `${gridStepScreen}px ${gridStepScreen}px` : undefined,
-          }}
-          className="relative bg-raised border border-border rounded-xl overflow-hidden max-w-full"
-        >
-          {referenceImage && (
-            <img
-              src={referenceImage}
-              alt="Reference"
-              draggable={false}
-              className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none opacity-40"
-            />
-          )}
+        <div className="relative bg-raised border border-border rounded-xl overflow-hidden max-w-full" style={{ width: STAGE_W, height: STAGE_H }}>
+          <Stage
+            width={STAGE_W}
+            height={STAGE_H}
+            x={camera.x}
+            y={camera.y}
+            scaleX={camera.scale}
+            scaleY={camera.scale}
+            onWheel={handleWheel}
+            onMouseDown={(e) => {
+              handleStageMouseDownCapture(e);
+              handleStageMouseDown(e);
+            }}
+            onMouseMove={handleStageMouseMove}
+            onMouseUp={handleStageMouseUp}
+            onClick={handleStageClick}
+            style={{ cursor: addMode ? 'crosshair' : 'grab' }}
+          >
+            <Layer listening={false}>
+              {refImg && <KonvaImage image={refImg} width={imageDims.w} height={imageDims.h} opacity={0.4} />}
+            </Layer>
 
-          {showMesh &&
-            layers.map((layer, i) => {
-              const topLeft = toScreen({ x: layer.meta.x, y: layer.meta.y });
-              const w = layer.meta.w * scale;
-              const h = layer.meta.h * scale;
-              const bound = !!bindings[i];
-              return (
-                <div
-                  key={`guide-${i}`}
-                  className={
-                    'absolute border pointer-events-none ' +
-                    (bound ? 'border-accent/50' : 'border-amber/50 border-dashed')
-                  }
-                  style={{ left: topLeft.x, top: topLeft.y, width: w, height: h }}
-                >
-                  <span
-                    className={
-                      'absolute -top-4 left-0 text-[9px] font-mono font-semibold ' +
-                      (bound ? 'text-accent' : 'text-amber')
-                    }
-                  >
-                    {i + 1}
-                  </span>
-                </div>
-              );
-            })}
-
-          {/* Unbound layers: plain static image, no deformation needed yet. */}
-          {layers.map((layer, i) => {
-            if (bindings[i]) return null;
-            const topLeft = toScreen({ x: layer.meta.x, y: layer.meta.y });
-            const w = layer.meta.w * scale;
-            const h = layer.meta.h * scale;
-            return (
-              <img
-                key={`static-${i}`}
-                src={`data:image/png;base64,${layer.image}`}
-                alt={`Layer ${i + 1}`}
-                draggable={false}
-                className="absolute select-none pointer-events-none"
-                style={{ left: topLeft.x, top: topLeft.y, width: w, height: h }}
-              />
-            );
-          })}
-
-          {/* Bound layers: warped canvas, deformed by mesh + bone skinning. */}
-          {layers.map((layer, i) => {
-            if (!bindings[i]) return null;
-            return (
-              <canvas
-                key={`canvas-${i}`}
-                ref={(el) => {
-                  if (el) canvasRefs.current.set(i, el);
-                  else canvasRefs.current.delete(i);
-                }}
-                width={DISPLAY_W}
-                height={displayH}
-                className="absolute inset-0 pointer-events-none"
-                style={{ width: DISPLAY_W, height: displayH }}
-              />
-            );
-          })}
-
-          <svg className="absolute inset-0 pointer-events-none" width={DISPLAY_W} height={displayH}>
-            {bones
-              .filter((b) => b.parentId)
-              .map((b) => {
-                const parentWorld = worldTransforms.get(b.parentId!);
-                const world = worldTransforms.get(b.id);
-                if (!parentWorld || !world) return null;
-                const p1 = toScreen(parentWorld);
-                const p2 = toScreen(world);
+            <Layer>
+              {/* Unbound layers: static image */}
+              {layers.map((layer, i) => {
+                if (bindings[i]) return null;
+                const rig = layerRigsRef.current.get(i);
+                if (!rig || !loadedImages[i]) return null;
                 return (
-                  <line
-                    key={b.id}
-                    x1={p1.x}
-                    y1={p1.y}
-                    x2={p2.x}
-                    y2={p2.y}
-                    stroke="var(--color-accent)"
-                    strokeWidth={2}
-                    strokeOpacity={0.85}
+                  <KonvaImage
+                    key={`static-${i}`}
+                    image={rig.image}
+                    x={layer.meta.x}
+                    y={layer.meta.y}
+                    width={layer.meta.w}
+                    height={layer.meta.h}
+                    listening={false}
                   />
                 );
               })}
-          </svg>
 
-          {bones.map((b) => {
-            const world = worldTransforms.get(b.id);
-            if (!world) return null;
-            const pos = toScreen(world);
-            const selected = selectedBoneId === b.id;
-            const handlePos = {
-              x: pos.x + HANDLE_SCREEN_LEN * Math.cos(world.rotation),
-              y: pos.y + HANDLE_SCREEN_LEN * Math.sin(world.rotation),
-            };
-            return (
-              <div key={b.id}>
-                <div
-                  onPointerDown={startDrag('bone', b.id)}
-                  className={
-                    'absolute w-4 h-4 -ml-2 -mt-2 rounded-full border-2 cursor-grab active:cursor-grabbing touch-none ' +
-                    (selected ? 'bg-amber border-amber' : 'bg-accent border-accent')
-                  }
-                  style={{ left: pos.x, top: pos.y }}
-                  title={b.name}
-                />
-                {showMesh && (
-                  <span
-                    className="absolute text-[9px] font-mono font-semibold text-text bg-bg/70 px-1 rounded pointer-events-none whitespace-nowrap"
-                    style={{ left: pos.x + 8, top: pos.y - 16 }}
-                  >
-                    {b.name}
-                  </span>
-                )}
-                {selected && (
-                  <div
-                    onPointerDown={startDrag('handle', b.id)}
-                    className="absolute w-2.5 h-2.5 -ml-[5px] -mt-[5px] rounded-sm bg-amber cursor-alias touch-none"
-                    style={{ left: handlePos.x, top: handlePos.y }}
-                    title="Drag to rotate"
+              {/* Bound layers: warped mesh via custom Shape */}
+              {layers.map((layer, i) => {
+                const boneId = bindings[i];
+                if (!boneId) return null;
+                const rig = layerRigsRef.current.get(i);
+                if (!rig || !loadedImages[i] || !rig.weights.length) return null;
+
+                return (
+                  <Shape
+                    key={`warp-${i}`}
+                    listening={false}
+                    sceneFunc={(ctx, shape) => {
+                      const restVertices = rig.mesh.vertices;
+                      const posedVertices = restVertices.map((v, vi) => {
+                        const posedWorld = skinVertex(
+                          { x: v.x + layer.meta.x, y: v.y + layer.meta.y },
+                          rig.weights[vi] ?? [],
+                          rig.boneRestPoses,
+                          worldTransforms
+                        );
+                        return posedWorld;
+                      });
+                      drawWarpedMesh({
+                        ctx: ctx._context,
+                        image: rig.image,
+                        mesh: rig.mesh,
+                        restVertices,
+                        posedVertices,
+                      });
+                      ctx.fillStrokeShape(shape);
+                    }}
                   />
-                )}
-              </div>
-            );
-          })}
+                );
+              })}
+
+              {/* Mesh guide outlines */}
+              {showMesh &&
+                layers.map((layer, i) => {
+                  const bound = !!bindings[i];
+                  return (
+                    <Line
+                      key={`guide-${i}`}
+                      points={[
+                        layer.meta.x, layer.meta.y,
+                        layer.meta.x + layer.meta.w, layer.meta.y,
+                        layer.meta.x + layer.meta.w, layer.meta.y + layer.meta.h,
+                        layer.meta.x, layer.meta.y + layer.meta.h,
+                        layer.meta.x, layer.meta.y,
+                      ]}
+                      stroke={bound ? 'rgba(80,200,255,0.5)' : 'rgba(255,176,32,0.5)'}
+                      strokeWidth={1 / camera.scale}
+                      dash={bound ? undefined : [4 / camera.scale, 4 / camera.scale]}
+                      listening={false}
+                    />
+                  );
+                })}
+
+              {/* Bone connector lines */}
+              {bones
+                .filter((b) => b.parentId)
+                .map((b) => {
+                  const parentWorld = worldTransforms.get(b.parentId!);
+                  const world = worldTransforms.get(b.id);
+                  if (!parentWorld || !world) return null;
+                  return (
+                    <Line
+                      key={b.id}
+                      points={[parentWorld.x, parentWorld.y, world.x, world.y]}
+                      stroke="var(--color-accent, #4dd0e1)"
+                      strokeWidth={2 / camera.scale}
+                      opacity={0.85}
+                      listening={false}
+                    />
+                  );
+                })}
+
+              {/* Bone handles */}
+              {bones.map((b) => {
+                const world = worldTransforms.get(b.id);
+                if (!world) return null;
+                const selected = selectedBoneId === b.id;
+                const handleLen = 42 / camera.scale;
+                const handlePos = {
+                  x: world.x + handleLen * Math.cos(world.rotation),
+                  y: world.y + handleLen * Math.sin(world.rotation),
+                };
+                return (
+                  <Group key={b.id}>
+                    <Circle
+                      x={world.x}
+                      y={world.y}
+                      radius={7 / camera.scale}
+                      fill={selected ? '#f5a524' : '#4dd0e1'}
+                      stroke={selected ? '#f5a524' : '#4dd0e1'}
+                      draggable
+                      onDragStart={() => setSelectedBoneId(b.id)}
+                      onDragMove={onBoneDragMove(b.id)}
+                    />
+                    {showMesh && (
+                      <Text
+                        x={world.x + 8 / camera.scale}
+                        y={world.y - 16 / camera.scale}
+                        text={b.name}
+                        fontSize={11 / camera.scale}
+                        fill="white"
+                        listening={false}
+                      />
+                    )}
+                    {selected && (
+                      <Circle
+                        x={handlePos.x}
+                        y={handlePos.y}
+                        radius={5 / camera.scale}
+                        fill="#f5a524"
+                        draggable
+                        onDragMove={onHandleDragMove(b.id)}
+                      />
+                    )}
+                  </Group>
+                );
+              })}
+            </Layer>
+          </Stage>
         </div>
+        <p className="text-[11px] text-dim mt-1.5">Scroll to zoom · middle-click or drag empty space to pan</p>
       </div>
 
       <div className="w-full lg:w-52 shrink-0">
