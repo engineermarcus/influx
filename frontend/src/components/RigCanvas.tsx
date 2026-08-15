@@ -7,7 +7,7 @@ import type { Bone, LayerMeta } from '@/lib/rigTypes';
 import { makeRootBone, ROOT_BONE_ID } from '@/lib/rigTypes';
 import { composeTransform, worldToLocalPoint, angleBetween, IDENTITY_TRANSFORM, skinVertex } from '@/lib/rigMath';
 import type { WorldTransform, Vec2 } from '@/lib/rigMath';
-import { buildGridMesh, autoWeightByDistance } from '@/lib/rigMesh';
+import { buildGridMesh, buildShapedMesh, autoWeightByDistance } from '@/lib/rigMesh';
 import type { Mesh, BoneInfluence } from '@/lib/rigMesh';
 import { drawWarpedMesh } from '@/lib/rigWarp';
 import { useHistoryState } from '@/lib/rigHistory';
@@ -26,8 +26,8 @@ interface RigCanvasProps {
 
 const STAGE_W = 880;
 const STAGE_H = 620;
-const MESH_COLS = 6;
-const MESH_ROWS = 6;
+const MESH_COLS = 18;
+const MESH_ROWS = 18;
 const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 5;
 
@@ -84,10 +84,35 @@ export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanv
     layers.forEach((layer, i) => {
       if (layerRigsRef.current.has(i)) return;
       const img = new Image();
-      img.onload = () => setLoadedImages((prev) => ({ ...prev, [i]: true }));
+      img.onload = () => {
+        const { w, h } = layer.meta;
+        let mesh;
+        try {
+          const off = document.createElement('canvas');
+          off.width = w;
+          off.height = h;
+          const offCtx = off.getContext('2d');
+          if (!offCtx) throw new Error('no 2d context');
+          offCtx.drawImage(img, 0, 0, w, h);
+          const rgba = offCtx.getImageData(0, 0, w, h).data;
+          const alpha = new Uint8Array(w * h);
+          for (let p = 0; p < w * h; p++) alpha[p] = rgba[p * 4 + 3];
+          mesh = buildShapedMesh(alpha, w, h, MESH_COLS, MESH_ROWS);
+        } catch {
+          // getImageData can throw on a tainted canvas (e.g. cross-origin
+          // image data) — fall back to the plain rectangular grid so rigging
+          // still works, just without silhouette conforming.
+          mesh = buildGridMesh(w, h, MESH_COLS, MESH_ROWS);
+        }
+        const rig = layerRigsRef.current.get(i);
+        layerRigsRef.current.set(i, { ...(rig as LayerRig), mesh });
+        setLoadedImages((prev) => ({ ...prev, [i]: true }));
+      };
       img.src = `data:image/png;base64,${layer.image}`;
-      const mesh = buildGridMesh(layer.meta.w, layer.meta.h, MESH_COLS, MESH_ROWS);
-      layerRigsRef.current.set(i, { mesh, weights: [], boneRestPoses: new Map(), image: img });
+      // Placeholder mesh so the ref entry exists immediately; replaced with
+      // the shaped mesh once the image decodes and alpha is readable above.
+      const placeholderMesh = buildGridMesh(layer.meta.w, layer.meta.h, MESH_COLS, MESH_ROWS);
+      layerRigsRef.current.set(i, { mesh: placeholderMesh, weights: [], boneRestPoses: new Map(), image: img });
     });
   }, [layers]);
 
