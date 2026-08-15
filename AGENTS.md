@@ -100,6 +100,26 @@ Linear blend skinning (LBS) is industry standard (Spine, DragonBones, every real
 
 ---
 
+## Session Update — Mesh Now Conforms to Silhouette, Not Bounding Box
+
+Previous fix made `showMesh` render the actual grid instead of a bbox rectangle — but that grid was still a plain rectangle over the full layer bounding box, not shaped to the character. Real reference for what it should look like: dense triangulated wireframe that hugs the body (head/torso/limbs), like a Blender/Cascadeur mesh.
+
+Added `buildShapedMesh` in `lib/rigMesh.ts` (new dep: `delaunator`):
+- Samples candidate points against the layer's actual alpha channel (segmentation backend already outputs RGBA crops with a real alpha mask — `servers/segmentation/app.py` builds layer crops from `rgba[y0:y1, x0:x1]` where alpha comes from the SAM mask, confirmed by reading the code, not assumed).
+- Delaunay-triangulates the surviving points.
+- Drops any triangle whose centroid + 3 edge-midpoints land mostly on transparent pixels — this is what kills triangles that used to bridge the gap between arms and torso, between legs, etc.
+- Falls back to `buildGridMesh` if too few points survive (near-empty/tiny layer).
+
+Mesh construction moved from being built immediately (pure geometry, no image needed) to inside each layer's `img.onload`, since alpha sampling needs decoded pixels — draws to an offscreen canvas, one `getImageData` call per layer, once.
+
+Bumped `MESH_COLS`/`MESH_ROWS` 6→18: silhouette-conforming mesh needs denser sampling than a rectangle to actually hug narrow limbs (forearms, ankles). Raw grid points get filtered down by the silhouette anyway, so triangle count on an actual character stays reasonable (~100-150 verts for a full-body cutout, not 18×18=361).
+
+Caught a real bug in my own first pass before shipping: `at(x,y)` indexed the alpha typed array with fractional pixel coordinates (`c * stepX` isn't an integer for most grid steps) — `Uint8Array[6.67]` is `undefined`, not `arr[6]` or `arr[7]`, so it silently evaluated as "outside" for nearly every sample point (15 vertices survived out of ~360 candidates on a test silhouette that should have kept ~110+). Fixed by rounding to the nearest pixel before indexing. Verified against a synthetic humanoid alpha mask (head/torso/2 arms/2 legs with real gaps between them) in a standalone script before pushing — confirmed triangle count is sane and zero triangles land in the gap regions.
+
+Not yet done: boundary points are only as accurate as the 18×18 sample grid (no proper marching-squares contour extraction), so silhouette edges will look slightly blocky up close rather than perfectly smooth. Good enough for a first pass; revisit if it looks rough in practice.
+
+---
+
 ## Session Update — Mesh Guide Was Never Drawing the Mesh
 
 `showMesh` toggle only ever rendered the layer's bounding-box rectangle (4 corners) — `buildGridMesh`'s subdivided grid was computed and stored in `rig.mesh` but never actually rendered anywhere. This is why nothing looked like a mesh; it was a plain rectangle outline the whole time. Fixed: mesh guide is now a `Shape` that draws every triangle edge from `rig.mesh.triangles`, using skinned (posed) vertices for bound layers so the grid itself visibly deforms with bone movement, rest-position vertices for unbound layers.
