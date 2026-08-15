@@ -109,6 +109,7 @@ def session_response(sess: dict) -> dict:
     recomposed = do_recompose(image, layers)
     return {
         "gallery": [img_to_b64(l["crop"]) for l in layers],
+        "layer_meta": [{"x": l["x"], "y": l["y"], "w": l["w"], "h": l["h"]} for l in layers],
         "coverage": img_to_b64(coverage_preview(arr, claimed)),
         "recomposed": img_to_b64(recomposed) if recomposed else None,
         "layer_count": len(layers),
@@ -266,11 +267,11 @@ def clear():
         h, w = arr.shape[:2]
         claimed = np.zeros((h, w), dtype=bool)
         return jsonify({
-            "gallery": [], "layer_count": 0,
+            "gallery": [], "layer_meta": [], "layer_count": 0,
             "coverage": img_to_b64(coverage_preview(arr, claimed)),
             "recomposed": None,
         })
-    return jsonify({"gallery": [], "layer_count": 0, "coverage": None, "recomposed": None})
+    return jsonify({"gallery": [], "layer_meta": [], "layer_count": 0, "coverage": None, "recomposed": None})
 
 
 @app.route("/api/recompose", methods=["POST"])
