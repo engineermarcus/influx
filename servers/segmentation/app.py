@@ -68,7 +68,19 @@ def run_sam(arr: np.ndarray, x: int, y: int) -> np.ndarray:
 
 def coverage_preview(arr: np.ndarray, claimed: np.ndarray) -> Image.Image:
     dim = (arr * 0.35).astype(np.uint8)
-    return Image.fromarray(np.where(claimed[..., None], dim, arr))
+
+    # unclaimed: amber tint wash, color signal on top of brightness so it
+    # stays distinct from claimed even when source pixels are already bright
+    tint = np.array([255, 176, 32], dtype=np.float32)
+    hot = (arr.astype(np.float32) * 0.55 + tint * 0.45).astype(np.uint8)
+
+    out = np.where(claimed[..., None], dim, hot)
+
+    # thin dark boundary line on the unclaimed side of the edge
+    boundary = binary_dilation(claimed, iterations=1) & ~claimed
+    out[boundary] = [20, 20, 20]
+
+    return Image.fromarray(out)
 
 
 def do_recompose(image: Image.Image, layers: list) -> Image.Image | None:

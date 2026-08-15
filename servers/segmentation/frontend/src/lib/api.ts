@@ -70,6 +70,8 @@ export const api = {
   remove: (sessionId: string, x: number, y: number) =>
     post<SegmentResponse>('/api/remove', { session_id: sessionId, x, y }),
 
+  undo: (sessionId: string) =>
+    post<SegmentResponse>('/api/undo', { session_id: sessionId }),
   clear: (sessionId: string) =>
     post<SegmentResponse>('/api/clear', { session_id: sessionId }),
 

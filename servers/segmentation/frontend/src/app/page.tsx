@@ -19,6 +19,7 @@ export default function Home() {
   const [coverageImage, setCoverageImage] = useState<string | null>(null); // base64
   const [recomposedImage, setRecomposedImage] = useState<string | null>(null); // base64
   const [gallery, setGallery] = useState<string[]>([]);
+  const [canUndo, setCanUndo] = useState(false);
   const [segmenting, setSegmenting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null); // null = idle, 0-100 = uploading
   const [activeTab, setActiveTab] = useState<FrameKey>('input');
@@ -82,10 +83,11 @@ export default function Home() {
     [sessionId, toast]
   );
 
-  const applySegmentResult = useCallback((d: { coverage?: string; recomposed?: string | null; gallery?: string[] }) => {
+  const applySegmentResult = useCallback((d: { coverage?: string; recomposed?: string | null; gallery?: string[]; can_undo?: boolean }) => {
     if (d.coverage) setCoverageImage(d.coverage);
     setRecomposedImage(d.recomposed ?? null);
     setGallery(d.gallery ?? []);
+    setCanUndo(d.can_undo ?? false);
   }, []);
 
   const handleSegment = useCallback(
@@ -127,6 +129,17 @@ export default function Home() {
     [sessionId, applySegmentResult, toast]
   );
 
+  const handleUndo = useCallback(async () => {
+    if (!sessionId) return;
+    const d = await api.undo(sessionId);
+    if (d.error) {
+      toast(d.error, true);
+      return;
+    }
+    applySegmentResult(d);
+    toast('Undone');
+  }, [sessionId, applySegmentResult, toast]);
+
   const handleClear = useCallback(async () => {
     if (!sessionId) return;
     const d = await api.clear(sessionId);
@@ -156,6 +169,7 @@ export default function Home() {
     setCoverageImage(null);
     setRecomposedImage(null);
     setGallery([]);
+    setCanUndo(false);
     setActiveTab('input');
     setFullscreenFrame(null);
     initSession().then(() => toast('Ready for a new image'));
@@ -179,11 +193,8 @@ export default function Home() {
               <FramePanel
                 frameKey="input"
                 src={inputImage}
-                busy={segmenting}
                 canFullscreen
                 onExpand={() => setFullscreenFrame('input')}
-                onClickPoint={handleSegment}
-                cursorStyle="crosshair"
               />
               <FramePanel
                 frameKey="coverage"
@@ -196,8 +207,12 @@ export default function Home() {
               <FramePanel
                 frameKey="recomposed"
                 src={dataUrl(recomposedImage)}
+                busy={segmenting}
+                busyLabel="Segmenting…"
                 onClickPoint={handleRemove}
                 cursorStyle="cell"
+                onUndo={handleUndo}
+                canUndo={canUndo}
               />
             </div>
 
@@ -206,11 +221,8 @@ export default function Home() {
                 <FramePanel
                   frameKey="input"
                   src={inputImage}
-                  busy={segmenting}
                   canFullscreen
                   onExpand={() => setFullscreenFrame('input')}
-                  onClickPoint={handleSegment}
-                  cursorStyle="crosshair"
                 />
               )}
               {activeTab === 'coverage' && (
@@ -227,8 +239,12 @@ export default function Home() {
                 <FramePanel
                   frameKey="recomposed"
                   src={dataUrl(recomposedImage)}
+                  busy={segmenting}
+                  busyLabel="Segmenting…"
                   onClickPoint={handleRemove}
                   cursorStyle="cell"
+                  onUndo={handleUndo}
+                  canUndo={canUndo}
                 />
               )}
             </div>

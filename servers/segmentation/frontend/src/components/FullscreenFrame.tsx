@@ -51,7 +51,7 @@ export function FullscreenFrame({ frameKey, src, busy, onClickPoint, onExit, hud
           emptyLabel="Nothing here yet"
           busy={busy}
           busyLabel="Segmenting…"
-          onClickPoint={onClickPoint}
+          onClickPoint={frameKey === 'coverage' ? onClickPoint : undefined}
         />
       </div>
       <FloatingHud src={hudSrc} label={FRAME_LABELS.recomposed} onClose={onExit} />

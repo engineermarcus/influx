@@ -34,7 +34,7 @@ export const FRAME_LABELS: Record<FrameKey, string> = {
 };
 
 export const FRAME_HINTS: Record<FrameKey, string> = {
-  input: 'Tap a region to extract it',
+  input: 'Original image · preview only',
   coverage: 'Bright = unclaimed · tap to add',
   recomposed: 'Tap a layer to remove it',
 };

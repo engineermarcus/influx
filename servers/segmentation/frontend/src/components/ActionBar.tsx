@@ -10,8 +10,6 @@ interface ActionBarProps {
   onClear: () => void;
   onReset: () => void;
   showReset: boolean;
-  onUndo: () => void;
-  canUndo: boolean;
 }
 
 export function ActionBar({
