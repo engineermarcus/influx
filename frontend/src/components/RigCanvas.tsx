@@ -1,10 +1,14 @@
 'use client';
-import { useState, useRef, useMemo, useCallback } from 'react';
+import { useState, useRef, useMemo, useCallback, useEffect } from 'react';
 import { Icons } from './icons';
 import type { Bone, LayerMeta } from '@/lib/rigTypes';
 import { makeRootBone, ROOT_BONE_ID } from '@/lib/rigTypes';
 import { composeTransform, worldToLocalPoint, angleBetween, IDENTITY_TRANSFORM } from '@/lib/rigMath';
-import type { WorldTransform } from '@/lib/rigMath';
+import type { WorldTransform, Vec2 } from '@/lib/rigMath';
+import { buildGridMesh, autoWeightByDistance } from '@/lib/rigMesh';
+import type { Mesh, BoneInfluence } from '@/lib/rigMesh';
+import { skinVertex } from '@/lib/rigMath';
+import { drawWarpedMesh } from '@/lib/rigWarp';
 
 interface RigLayerInput {
   image: string; // base64, no data: prefix
@@ -14,13 +18,23 @@ interface RigLayerInput {
 interface RigCanvasProps {
   layers: RigLayerInput[];
   imageDims: { w: number; h: number };
-  referenceImage?: string | null; // full data URL of the original upload, shown as a dim backdrop
+  referenceImage?: string | null;
   onExit: () => void;
 }
 
 const DISPLAY_W = 880;
 const HANDLE_SCREEN_LEN = 42;
-const GRID_STEP_IMG_PX = 50; // grid line spacing in original-image pixel units
+const GRID_STEP_IMG_PX = 50;
+const MESH_COLS = 6;
+const MESH_ROWS = 6;
+
+// Per-layer state needed for mesh deformation, keyed by layer index.
+interface LayerRig {
+  mesh: Mesh;
+  weights: BoneInfluence[][]; // one entry per mesh vertex
+  boneRestPoses: Map<string, WorldTransform>; // captured at bind time
+  image: HTMLImageElement;
+}
 
 export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanvasProps) {
   const [bones, setBones] = useState<Bone[]>([makeRootBone()]);
@@ -32,6 +46,9 @@ export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanv
 
   const stageRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ kind: 'bone' | 'handle'; boneId: string; pointerId: number } | null>(null);
+  const layerRigsRef = useRef<Map<number, LayerRig>>(new Map());
+  const canvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map());
+  const [loadedImages, setLoadedImages] = useState<Record<number, boolean>>({});
 
   const scale = imageDims.w > 0 ? DISPLAY_W / imageDims.w : 1;
   const displayH = imageDims.h * scale;
@@ -62,6 +79,26 @@ export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanv
     },
     [scale]
   );
+
+  // Preload each layer's image into an HTMLImageElement so it can be drawn to canvas.
+  useEffect(() => {
+    layers.forEach((layer, i) => {
+      if (layerRigsRef.current.has(i)) return;
+      const img = new Image();
+      img.onload = () => {
+        setLoadedImages((prev) => ({ ...prev, [i]: true }));
+      };
+      img.src = `data:image/png;base64,${layer.image}`;
+      // Mesh is built in the layer's own local pixel space (0,0 = crop top-left).
+      const mesh = buildGridMesh(layer.meta.w, layer.meta.h, MESH_COLS, MESH_ROWS);
+      layerRigsRef.current.set(i, {
+        mesh,
+        weights: [],
+        boneRestPoses: new Map(),
+        image: img,
+      });
+    });
+  }, [layers]);
 
   const handleStageClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
@@ -120,10 +157,35 @@ export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanv
     dragRef.current = null;
   }, []);
 
+  // Binding a layer to a bone captures the CURRENT world transforms of every
+  // bone as that layer's "rest pose" reference, and computes vertex weights
+  // relative to bone positions at this moment. Re-binding recalculates both,
+  // which lets you re-anchor a layer if you move bones before binding.
   const bindSelected = useCallback(() => {
     if (selectedLayerIdx === null || !selectedBoneId) return;
     setBindings((prev) => ({ ...prev, [selectedLayerIdx]: selectedBoneId }));
-  }, [selectedLayerIdx, selectedBoneId]);
+
+    const rig = layerRigsRef.current.get(selectedLayerIdx);
+    const meta = layers[selectedLayerIdx]?.meta;
+    if (!rig || !meta) return;
+
+    const boneRestPoses = new Map<string, WorldTransform>();
+    for (const [id, wt] of worldTransforms.entries()) boneRestPoses.set(id, wt);
+
+    // Bone positions relative to this layer's local mesh space, for weighting.
+    const bonePositionsLocal = new Map<string, Vec2>();
+    for (const [id, wt] of worldTransforms.entries()) {
+      bonePositionsLocal.set(id, { x: wt.x - meta.x, y: wt.y - meta.y });
+    }
+
+    const weights = autoWeightByDistance(rig.mesh.vertices, bonePositionsLocal, 3, 2);
+
+    layerRigsRef.current.set(selectedLayerIdx, {
+      ...rig,
+      weights,
+      boneRestPoses,
+    });
+  }, [selectedLayerIdx, selectedBoneId, worldTransforms, layers]);
 
   const canDeleteSelected =
     selectedBoneId !== null && selectedBoneId !== ROOT_BONE_ID && !bones.some((b) => b.parentId === selectedBoneId);
@@ -140,6 +202,42 @@ export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanv
     });
     setSelectedBoneId(ROOT_BONE_ID);
   }, [canDeleteSelected, selectedBoneId]);
+
+  // Re-render every bound layer's canvas whenever bone poses change.
+  useEffect(() => {
+    layers.forEach((layer, i) => {
+      const boneId = bindings[i];
+      if (!boneId) return;
+      const rig = layerRigsRef.current.get(i);
+      const canvas = canvasRefs.current.get(i);
+      if (!rig || !canvas || !rig.weights.length || !loadedImages[i]) return;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const restVertices = rig.mesh.vertices; // local space, unscaled
+      const posedVertices = restVertices.map((v, vi) => {
+        const posedLocal = skinVertex(
+          { x: v.x + layer.meta.x, y: v.y + layer.meta.y }, // rest point in full-image space
+          rig.weights[vi] ?? [],
+          rig.boneRestPoses,
+          worldTransforms
+        );
+        // Convert to screen space for drawing.
+        return toScreen(posedLocal);
+      });
+      const restScreenVertices = restVertices.map((v) => toScreen({ x: v.x, y: v.y }));
+
+      drawWarpedMesh({
+        ctx,
+        image: rig.image,
+        mesh: rig.mesh,
+        restVertices: restScreenVertices,
+        posedVertices,
+      });
+    });
+  }, [bindings, worldTransforms, layers, loadedImages, toScreen]);
 
   return (
     <div className="flex flex-col lg:flex-row gap-4">
@@ -239,28 +337,38 @@ export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanv
               );
             })}
 
+          {/* Unbound layers: plain static image, no deformation needed yet. */}
           {layers.map((layer, i) => {
-            const boneId = bindings[i];
-            if (!boneId) return null;
-            const world = worldTransforms.get(boneId);
-            if (!world) return null;
-            const center = toScreen(world);
-            const w = layer.meta.w * scale * world.scale;
-            const h = layer.meta.h * scale * world.scale;
+            if (bindings[i]) return null;
+            const topLeft = toScreen({ x: layer.meta.x, y: layer.meta.y });
+            const w = layer.meta.w * scale;
+            const h = layer.meta.h * scale;
             return (
               <img
-                key={i}
+                key={`static-${i}`}
                 src={`data:image/png;base64,${layer.image}`}
                 alt={`Layer ${i + 1}`}
                 draggable={false}
-                className="absolute select-none pointer-events-none origin-center"
-                style={{
-                  left: center.x - w / 2,
-                  top: center.y - h / 2,
-                  width: w,
-                  height: h,
-                  transform: `rotate(${world.rotation}rad)`,
+                className="absolute select-none pointer-events-none"
+                style={{ left: topLeft.x, top: topLeft.y, width: w, height: h }}
+              />
+            );
+          })}
+
+          {/* Bound layers: warped canvas, deformed by mesh + bone skinning. */}
+          {layers.map((layer, i) => {
+            if (!bindings[i]) return null;
+            return (
+              <canvas
+                key={`canvas-${i}`}
+                ref={(el) => {
+                  if (el) canvasRefs.current.set(i, el);
+                  else canvasRefs.current.delete(i);
                 }}
+                width={DISPLAY_W}
+                height={displayH}
+                className="absolute inset-0 pointer-events-none"
+                style={{ width: DISPLAY_W, height: displayH }}
               />
             );
           })}

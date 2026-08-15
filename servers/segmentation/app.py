@@ -76,6 +76,18 @@ def run_sam(sess, arr: np.ndarray, x: int, y: int) -> np.ndarray:
     return best.astype(np.uint8) * 255
 
 
+def run_sam_box(sess, arr: np.ndarray, box: list) -> np.ndarray:
+    if sess.get("_encoded_id") != id(sess["image"]):
+        predictor.set_image(arr)
+        sess["_encoded_id"] = id(sess["image"])
+    masks, scores, _ = predictor.predict(
+        box=np.array(box),
+        multimask_output=False,
+    )
+    best = masks[0]
+    return best.astype(np.uint8) * 255
+
+
 def coverage_preview(arr: np.ndarray, claimed: np.ndarray) -> Image.Image:
     dim = (arr * 0.35).astype(np.uint8)
 
@@ -184,6 +196,83 @@ def upload():
     })
 
 
+@app.route("/api/segment_preview", methods=["POST"])
+def segment_preview():
+    data = request.json
+    sess = get_session(data.get("session_id"))
+    if sess is None:
+        return jsonify({"error": "Invalid session"}), 400
+    if sess["image"] is None:
+        return jsonify({"error": "No image uploaded"}), 400
+
+    box = data.get("box")
+    point = (data.get("x"), data.get("y")) if "x" in data else None
+    image, claimed = sess["image"], sess["claimed"]
+    arr = np.array(image.convert("RGB"))
+    h, w = arr.shape[:2]
+    if claimed is None:
+        claimed = np.zeros((h, w), dtype=bool)
+
+    if box is not None:
+        raw_mask = run_sam_box(sess, arr, box) > 0
+    else:
+        raw_mask = run_sam(sess, arr, int(point[0]), int(point[1])) > 0
+    m = binary_dilation(raw_mask, iterations=DILATE_PX) & ~claimed
+
+    preview = arr.copy()
+    tint = np.array([80, 200, 255], dtype=np.uint8)
+    preview[m] = (preview[m] * 0.4 + tint * 0.6).astype(np.uint8)
+
+    ys, xs = np.where(m)
+    empty = len(xs) == 0
+    return jsonify({
+        "preview": img_to_b64(Image.fromarray(preview)),
+        "empty": empty,
+        "pixel_count": int(m.sum()),
+    })
+
+
+@app.route("/api/segment_confirm", methods=["POST"])
+def segment_confirm():
+    data = request.json
+    sess = get_session(data.get("session_id"))
+    if sess is None:
+        return jsonify({"error": "Invalid session"}), 400
+    if sess["image"] is None:
+        return jsonify({"error": "No image uploaded"}), 400
+
+    box = data.get("box")
+    point = (data.get("x"), data.get("y")) if "x" in data else None
+    image, layers, claimed = sess["image"], sess["layers"], sess["claimed"]
+    arr = np.array(image.convert("RGB"))
+    h, w = arr.shape[:2]
+    if claimed is None:
+        claimed = np.zeros((h, w), dtype=bool)
+
+    push_history(sess)
+    if box is not None:
+        raw_mask = run_sam_box(sess, arr, box) > 0
+    else:
+        raw_mask = run_sam(sess, arr, int(point[0]), int(point[1])) > 0
+    m = binary_dilation(raw_mask, iterations=DILATE_PX) & ~claimed
+
+    ys, xs = np.where(m)
+    if len(xs) == 0:
+        sess["claimed"] = claimed
+        return jsonify(session_response(sess))
+
+    x0, x1, y0, y1 = int(xs.min()), int(xs.max()), int(ys.min()), int(ys.max())
+    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+    rgba[..., :3] = arr
+    rgba[..., 3] = (m * 255).astype(np.uint8)
+
+    sess["layers"] = layers + [{
+        "crop": Image.fromarray(rgba[y0 : y1 + 1, x0 : x1 + 1]),
+        "x": x0, "y": y0,
+        "w": x1 - x0 + 1, "h": y1 - y0 + 1,
+    }]
+    sess["claimed"] = claimed | m
+    return jsonify(session_response(sess))
 @app.route("/api/segment", methods=["POST"])
 def segment():
     data = request.json

@@ -1,5 +1,4 @@
 'use client';
-
 import { useEffect } from 'react';
 import { FrameCanvas } from './FrameCanvas';
 import { FloatingHud } from './FloatingHud';
@@ -11,12 +10,13 @@ interface FullscreenFrameProps {
   frameKey: Extract<FrameKey, 'input' | 'coverage'>;
   src: string | null;
   busy?: boolean;
-  onClickPoint: (x: number, y: number) => void;
+  onBoxSelect?: (box: [number, number, number, number]) => void;
+  onPointSelect?: (x: number, y: number) => void;
   onExit: () => void;
   hudSrc: string | null;
 }
 
-export function FullscreenFrame({ frameKey, src, busy, onClickPoint, onExit, hudSrc }: FullscreenFrameProps) {
+export function FullscreenFrame({ frameKey, src, busy, onBoxSelect, onPointSelect, onExit, hudSrc }: FullscreenFrameProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onExit();
@@ -28,7 +28,6 @@ export function FullscreenFrame({ frameKey, src, busy, onClickPoint, onExit, hud
       document.body.style.overflow = '';
     };
   }, [onExit]);
-
   return (
     <div className="fixed inset-0 z-[60] bg-bg flex flex-col">
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-surface shrink-0">
@@ -51,7 +50,8 @@ export function FullscreenFrame({ frameKey, src, busy, onClickPoint, onExit, hud
           emptyLabel="Nothing here yet"
           busy={busy}
           busyLabel="Segmenting…"
-          onClickPoint={frameKey === 'coverage' ? onClickPoint : undefined}
+          onBoxSelect={frameKey === 'coverage' ? onBoxSelect : undefined}
+          onPointSelect={frameKey === 'coverage' ? onPointSelect : undefined}
         />
       </div>
       <FloatingHud src={hudSrc} label={FRAME_LABELS.recomposed} onClose={onExit} />

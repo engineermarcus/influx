@@ -29,6 +29,10 @@ export default function Home() {
   const [selectedForRig, setSelectedForRig] = useState<Set<number>>(new Set());
   const prevGalleryLenRef = useRef(0);
   const [segmenting, setSegmenting] = useState(false);
+  const [pendingSelection, setPendingSelection] = useState<{ box: [number, number, number, number] } | { x: number; y: number } | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null); // null = idle, 0-100 = uploading
   const [activeTab, setActiveTab] = useState<FrameKey>('input');
   const [fullscreenFrame, setFullscreenFrame] = useState<Extract<FrameKey, 'input' | 'coverage'> | null>(null);
@@ -46,6 +50,7 @@ export default function Home() {
     toastTimer.current = setTimeout(() => setToastVisible(false), ms);
   }, []);
 
+  const sessionInitRef = useRef(false);
   const initSession = useCallback(async () => {
     try {
       const d = await api.createSession();
@@ -56,6 +61,8 @@ export default function Home() {
   }, [toast]);
 
   useEffect(() => {
+    if (sessionInitRef.current) return;
+    sessionInitRef.current = true;
     initSession();
   }, [initSession]);
 
@@ -136,6 +143,79 @@ export default function Home() {
     },
     [sessionId, applySegmentResult, toast, gallery.length]
   );
+
+  const handleBoxSelect = useCallback(
+    async (box: [number, number, number, number]) => {
+      if (!sessionId) return;
+      setPendingSelection({ box });
+      setPreviewing(true);
+      try {
+        const d = await api.segmentPreview(sessionId, { box });
+        if (d.empty) {
+          toast('Nothing found in that box', true);
+          setPendingSelection(null);
+          return;
+        }
+        setPreviewImage(d.preview);
+      } catch (err) {
+        toast('Preview failed: ' + (err as Error).message, true);
+        setPendingSelection(null);
+      } finally {
+        setPreviewing(false);
+      }
+    },
+    [sessionId, toast]
+  );
+
+  const handlePointSelect = useCallback(
+    async (x: number, y: number) => {
+      if (!sessionId) return;
+      const selection = { x, y };
+      setPendingSelection(selection);
+      setPreviewing(true);
+      try {
+        const d = await api.segmentPreview(sessionId, selection);
+        if (d.empty) {
+          toast('Nothing found there', true);
+          setPendingSelection(null);
+          return;
+        }
+        setPreviewImage(d.preview);
+      } catch (err) {
+        toast('Preview failed: ' + (err as Error).message, true);
+        setPendingSelection(null);
+      } finally {
+        setPreviewing(false);
+      }
+    },
+    [sessionId, toast]
+  );
+
+
+  const handleConfirmBox = useCallback(async () => {
+    if (!sessionId || !pendingSelection) return;
+    setConfirming(true);
+    try {
+      const d = await api.segmentConfirm(sessionId, pendingSelection);
+      if (d.error) {
+        toast(d.error, true);
+        return;
+      }
+      applySegmentResult(d);
+      toast(`Layer ${d.layer_count ?? gallery.length + 1} added`);
+    } catch (err) {
+      toast('Confirm failed: ' + (err as Error).message, true);
+    } finally {
+      setConfirming(false);
+      setPendingSelection(null);
+      setPreviewImage(null);
+    }
+  }, [sessionId, pendingSelection, applySegmentResult, toast, gallery.length]);
+
+  const handleCancelBox = useCallback(() => {
+    setPendingSelection(null);
+    setPreviewImage(null);
+  }, []);
 
   const handleRemove = useCallback(
     async (x: number, y: number) => {
@@ -243,11 +323,14 @@ export default function Home() {
               />
               <FramePanel
                 frameKey="coverage"
-                src={dataUrl(coverageImage)}
+                src={previewImage ? dataUrl(previewImage) : dataUrl(coverageImage)}
                 canFullscreen
                 onExpand={() => setFullscreenFrame('coverage')}
-                onClickPoint={handleSegment}
+                onBoxSelect={handleBoxSelect}
+                onPointSelect={handlePointSelect}
                 cursorStyle="crosshair"
+                busy={previewing}
+                busyLabel="Analyzing selection…"
               />
               <FramePanel
                 frameKey="recomposed"
@@ -273,11 +356,14 @@ export default function Home() {
               {activeTab === 'coverage' && (
                 <FramePanel
                   frameKey="coverage"
-                  src={dataUrl(coverageImage)}
+                  src={previewImage ? dataUrl(previewImage) : dataUrl(coverageImage)}
                   canFullscreen
                   onExpand={() => setFullscreenFrame('coverage')}
-                  onClickPoint={handleSegment}
+                  onBoxSelect={handleBoxSelect}
                   cursorStyle="crosshair"
+                  onPointSelect={handlePointSelect}
+                busy={previewing}
+                busyLabel="Analyzing selection…"
                 />
               )}
               {activeTab === 'recomposed' && (
@@ -293,6 +379,28 @@ export default function Home() {
                 />
               )}
             </div>
+
+            {pendingSelection && (
+              <div className="flex items-center gap-2.5 mb-5 p-3 rounded-lg border border-accent/40 bg-accent/10">
+                <span className="text-xs text-muted flex-1">
+                  {previewing ? "Analyzing selection…" : "Confirm this selection?"}
+                </span>
+                <button
+                  onClick={handleCancelBox}
+                  disabled={confirming}
+                  className="px-3 py-1.5 rounded-md text-xs font-medium bg-raised border border-border text-muted hover:text-text disabled:opacity-40 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmBox}
+                  disabled={previewing || confirming}
+                  className="px-3 py-1.5 rounded-md text-xs font-semibold bg-accent text-bg hover:opacity-90 disabled:opacity-40 transition-colors"
+                >
+                  {confirming ? "Adding…" : "Confirm"}
+                </button>
+              </div>
+            )}
 
             <ActionBar
               layerCount={gallery.length}
@@ -326,7 +434,7 @@ export default function Home() {
               .filter((l) => selectedForRig.has(l.idx))
               .map(({ image, meta }) => ({ image, meta }))}
             imageDims={imageDims}
-            referenceImage={inputImage}
+            referenceImage={recomposedImage}
             onExit={() => setMode('main')}
           />
         )}
@@ -337,7 +445,8 @@ export default function Home() {
           frameKey={fullscreenFrame}
           src={fullscreenFrame === 'input' ? inputImage : dataUrl(coverageImage)}
           busy={segmenting}
-          onClickPoint={handleSegment}
+          onBoxSelect={handleBoxSelect}
+          onPointSelect={handlePointSelect}
           onExit={() => setFullscreenFrame(null)}
           hudSrc={dataUrl(recomposedImage)}
         />

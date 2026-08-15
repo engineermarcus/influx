@@ -67,6 +67,12 @@ export const api = {
   segment: (sessionId: string, x: number, y: number) =>
     post<SegmentResponse>('/api/segment', { session_id: sessionId, x, y }),
 
+  segmentPreview: (sessionId: string, selection: { box: [number, number, number, number] } | { x: number; y: number }) =>
+    post<{ preview: string; empty: boolean; pixel_count: number }>('/api/segment_preview', { session_id: sessionId, ...selection }),
+
+  segmentConfirm: (sessionId: string, selection: { box: [number, number, number, number] } | { x: number; y: number }) =>
+    post<SegmentResponse>('/api/segment_confirm', { session_id: sessionId, ...selection }),
+
   remove: (sessionId: string, x: number, y: number) =>
     post<SegmentResponse>('/api/remove', { session_id: sessionId, x, y }),
 

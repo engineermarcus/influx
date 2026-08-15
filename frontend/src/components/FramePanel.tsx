@@ -18,6 +18,8 @@ interface FramePanelProps {
   canFullscreen?: boolean;
   onExpand?: () => void;
   onClickPoint?: (x: number, y: number) => void;
+  onBoxSelect?: (box: [number, number, number, number]) => void;
+  onPointSelect?: (x: number, y: number) => void;
   cursorStyle?: 'crosshair' | 'cell';
   onUndo?: () => void;
   canUndo?: boolean;
@@ -31,6 +33,8 @@ export function FramePanel({
   canFullscreen,
   onExpand,
   onClickPoint,
+  onBoxSelect,
+  onPointSelect,
   cursorStyle,
   onUndo,
   canUndo,
@@ -140,6 +144,8 @@ export function FramePanel({
           busy={busy}
           busyLabel={busyLabel}
           onClickPoint={onClickPoint}
+          onBoxSelect={onBoxSelect}
+          onPointSelect={onPointSelect}
           cursorStyle={cursorStyle}
         />
       </div>
