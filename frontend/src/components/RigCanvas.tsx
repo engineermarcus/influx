@@ -435,24 +435,38 @@ export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanv
                 );
               })}
 
-              {/* Mesh guide outlines */}
+              {/* Mesh guide outlines — actual subdivided grid, not just the bbox */}
               {showMesh &&
                 layers.map((layer, i) => {
-                  const bound = !!bindings[i];
+                  const rig = layerRigsRef.current.get(i);
+                  if (!rig || !loadedImages[i]) return null;
+                  const boneId = bindings[i];
+                  const bound = !!boneId;
+
                   return (
-                    <Line
+                    <Shape
                       key={`guide-${i}`}
-                      points={[
-                        layer.meta.x, layer.meta.y,
-                        layer.meta.x + layer.meta.w, layer.meta.y,
-                        layer.meta.x + layer.meta.w, layer.meta.y + layer.meta.h,
-                        layer.meta.x, layer.meta.y + layer.meta.h,
-                        layer.meta.x, layer.meta.y,
-                      ]}
-                      stroke={bound ? 'rgba(80,200,255,0.5)' : 'rgba(255,176,32,0.5)'}
-                      strokeWidth={1 / camera.scale}
-                      dash={bound ? undefined : [4 / camera.scale, 4 / camera.scale]}
                       listening={false}
+                      sceneFunc={(ctx) => {
+                        const worldVerts = rig.mesh.vertices.map((v, vi) => {
+                          const restWorld = { x: v.x + layer.meta.x, y: v.y + layer.meta.y };
+                          if (!bound || !rig.weights.length) return restWorld;
+                          return skinVertex(restWorld, rig.weights[vi] ?? [], rig.boneRestPoses, worldTransforms);
+                        });
+
+                        ctx.beginPath();
+                        for (const tri of rig.mesh.triangles) {
+                          const a = worldVerts[tri.a], b = worldVerts[tri.b], c = worldVerts[tri.c];
+                          ctx.moveTo(a.x, a.y);
+                          ctx.lineTo(b.x, b.y);
+                          ctx.lineTo(c.x, c.y);
+                          ctx.lineTo(a.x, a.y);
+                        }
+                        ctx.strokeStyle = bound ? 'rgba(80,200,255,0.5)' : 'rgba(255,176,32,0.5)';
+                        ctx.lineWidth = 1 / camera.scale;
+                        ctx.setLineDash(bound ? [] : [4 / camera.scale, 4 / camera.scale]);
+                        ctx.stroke();
+                      }}
                     />
                   );
                 })}
