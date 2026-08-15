@@ -208,7 +208,7 @@ export function RigCanvas({ layers, imageDims, referenceImage, onExit }: RigCanv
               src={referenceImage}
               alt="Reference"
               draggable={false}
-              className="absolute inset-0 w-full h-full object-fill select-none pointer-events-none opacity-40"
+              className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none opacity-40"
             />
           )}
 

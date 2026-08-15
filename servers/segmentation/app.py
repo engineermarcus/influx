@@ -37,6 +37,14 @@ print("SAM ready.")
 # In-memory session store  { session_id: { image, layers, claimed } }
 sessions = {}
 
+SESSION_TTL = 3600
+
+def evict_stale_sessions():
+    now = __import__("time").time()
+    dead = [sid for sid, s in sessions.items() if now - s.get("_last_used", now) > SESSION_TTL]
+    for sid in dead:
+        del sessions[sid]
+
 app = Flask(__name__, static_folder="static")
 CORS(app)
 
@@ -55,8 +63,10 @@ def b64_to_img(b64: str) -> Image.Image:
     return Image.open(io.BytesIO(base64.b64decode(b64)))
 
 
-def run_sam(arr: np.ndarray, x: int, y: int) -> np.ndarray:
-    predictor.set_image(arr)
+def run_sam(sess, arr: np.ndarray, x: int, y: int) -> np.ndarray:
+    if sess.get("_encoded_id") != id(sess["image"]):
+        predictor.set_image(arr)
+        sess["_encoded_id"] = id(sess["image"])
     masks, scores, _ = predictor.predict(
         point_coords=np.array([[x, y]]),
         point_labels=np.array([1]),
@@ -120,6 +130,7 @@ def session_response(sess: dict) -> dict:
 def get_session(session_id: str):
     if not session_id or session_id not in sessions:
         return None
+    sessions[session_id]["_last_used"] = __import__("time").time()
     return sessions[session_id]
 
 def push_history(sess: dict):
@@ -149,6 +160,7 @@ def create_session():
 
 @app.route("/api/upload", methods=["POST"])
 def upload():
+    evict_stale_sessions()
     data = request.json
     sess = get_session(data.get("session_id"))
     if sess is None:
@@ -190,7 +202,7 @@ def segment():
         claimed = np.zeros((h, w), dtype=bool)
 
     push_history(sess)
-    raw_mask = run_sam(arr, x, y) > 0
+    raw_mask = run_sam(sess, arr, x, y) > 0
     m = binary_dilation(raw_mask, iterations=DILATE_PX) & ~claimed
 
     ys, xs = np.where(m)
